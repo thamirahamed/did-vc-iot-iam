@@ -1,0 +1,18 @@
+meta {
+  name: issue_identity_vc
+  type: http
+}
+
+post {
+  url: http://localhost:8000/vc/issue/identity
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "subject_did": "did:iot:example-subject"
+  }
+}
