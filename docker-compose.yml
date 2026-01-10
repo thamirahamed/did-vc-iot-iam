@@ -1,0 +1,20 @@
+version: '3.8'
+services:
+  fabric:
+    image: hyperledger/fabric-peer:latest
+    container_name: fabric-peer
+    environment:
+      - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
+    volumes:
+      - /var/run/:/host/var/run/
+    command: ['peer', 'node', 'start']
+  issuer-service:
+    build: ./issuer-service
+    ports:
+      - "8001:8000"
+  verifier-service:
+    build: ./verifier-service
+    ports:
+      - "8002:8000"
+  device-simulator:
+    build: ./device-simulator
