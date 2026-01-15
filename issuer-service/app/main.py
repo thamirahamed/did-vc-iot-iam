@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from .did import create_did, generate_keypair
-from .vc import issue_identity_vc
+from .vc import issue_capability_vc, issue_identity_vc
 
 app = FastAPI()
 
@@ -13,6 +13,12 @@ _ISSUER_PUBLIC_KEY_B64, ISSUER_PRIVATE_KEY = generate_keypair()
 
 class IdentityIssueRequest(BaseModel):
     subject_did: str
+
+
+class CapabilityIssueRequest(BaseModel):
+    subject_did: str
+    action: str
+    resource: str
 
 
 @app.get("/health")
@@ -32,6 +38,17 @@ def did_create() -> dict:
 def issue_identity_vc_endpoint(payload: IdentityIssueRequest) -> dict:
     return issue_identity_vc(
         subject_did=payload.subject_did,
+        issuer_did=ISSUER_DID,
+        issuer_private_key=ISSUER_PRIVATE_KEY,
+    )
+
+
+@app.post("/vc/issue/capability")
+def issue_capability_vc_endpoint(payload: CapabilityIssueRequest) -> dict:
+    return issue_capability_vc(
+        subject_did=payload.subject_did,
+        action=payload.action,
+        resource=payload.resource,
         issuer_did=ISSUER_DID,
         issuer_private_key=ISSUER_PRIVATE_KEY,
     )

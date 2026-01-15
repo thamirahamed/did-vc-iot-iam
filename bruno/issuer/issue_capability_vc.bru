@@ -1,0 +1,20 @@
+meta {
+  name: issue_capability_vc
+  type: http
+}
+
+post {
+  url: http://localhost:8000/vc/issue/capability
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "subject_did": "did:iot:example-subject",
+    "action": "read",
+    "resource": "iot:device:example"
+  }
+}
