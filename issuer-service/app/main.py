@@ -1,14 +1,20 @@
+import os
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from .did import create_did, generate_keypair
+from .did import create_did, generate_keypair, load_private_key_b64
 from .vc import issue_capability_vc, issue_identity_vc
 
 app = FastAPI()
 
 # Generate issuer identity once at startup and keep keys in memory.
 ISSUER_DID = create_did()
-_ISSUER_PUBLIC_KEY_B64, ISSUER_PRIVATE_KEY = generate_keypair()
+_private_key_b64 = os.getenv("ISSUER_PRIVATE_KEY_B64", "").strip()
+if _private_key_b64:
+    _ISSUER_PUBLIC_KEY_B64, ISSUER_PRIVATE_KEY = load_private_key_b64(_private_key_b64)
+else:
+    _ISSUER_PUBLIC_KEY_B64, ISSUER_PRIVATE_KEY = generate_keypair()
 
 
 class IdentityIssueRequest(BaseModel):

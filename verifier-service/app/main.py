@@ -1,12 +1,16 @@
 from fastapi import FastAPI
-from .verify import verify_vc
+
+from .models import AuthorizeRequest, AuthorizeResponse
+from .verify import authorize_request
 
 app = FastAPI()
 
+
 @app.get("/health")
-def health():
+def health() -> dict:
     return {"status": "ok"}
 
-@app.post("/verify")
-def verify(payload: dict):
-    return verify_vc(payload)
+
+@app.post("/authorize", response_model=AuthorizeResponse)
+def authorize(payload: AuthorizeRequest) -> AuthorizeResponse:
+    return authorize_request(payload)
