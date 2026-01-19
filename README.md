@@ -12,3 +12,17 @@ Prototype mono repo for a DID and Verifiable Credential based IAM system using H
 ## Notes
 
 This repo contains minimal starter code and simple health checks. It avoids advanced features like DIDComm, wallets, or zero knowledge proofs.
+
+## Automated Testing
+
+Generate issuer keys and create `.env.dev`:
+
+python scripts/gen_issuer_keys.py
+
+Start services:
+
+docker compose up --build
+
+Run integration tests:
+
+python scripts/integration_test.py
