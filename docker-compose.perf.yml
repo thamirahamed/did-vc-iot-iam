@@ -1,0 +1,52 @@
+services:
+  device_agent:
+    build: ./device-agent
+    depends_on:
+      - issuer
+      - verifier
+    stdin_open: true
+    tty: true
+    environment:
+      ISSUER_URL: ${ISSUER_URL:-http://issuer:8000}
+      VERIFIER_URL: ${VERIFIER_URL:-http://verifier:8000}
+      MODE: ${MODE:-perf}
+      SHOW_JSON: ${SHOW_JSON:-0}
+      PAUSE: ${PAUSE:-1}
+      PERF_RUNS: ${PERF_RUNS:-200}
+      WARMUP: ${WARMUP:-10}
+      ACTION: ${ACTION:-read}
+      RESOURCE: ${RESOURCE:-iot:device:example}
+      SLEEP_MS: ${SLEEP_MS:-0}
+      OUT_CSV: ${OUT_CSV:-/out/results.csv}
+    volumes:
+      - ./perf-out:/out
+    profiles:
+      - lite
+    cpus: "0.25"
+    mem_limit: 64m
+
+  device_agent_moderate:
+    build: ./device-agent
+    depends_on:
+      - issuer
+      - verifier
+    stdin_open: true
+    tty: true
+    environment:
+      ISSUER_URL: ${ISSUER_URL:-http://issuer:8000}
+      VERIFIER_URL: ${VERIFIER_URL:-http://verifier:8000}
+      MODE: ${MODE:-perf}
+      SHOW_JSON: ${SHOW_JSON:-0}
+      PAUSE: ${PAUSE:-1}
+      PERF_RUNS: ${PERF_RUNS:-200}
+      WARMUP: ${WARMUP:-10}
+      ACTION: ${ACTION:-read}
+      RESOURCE: ${RESOURCE:-iot:device:example}
+      SLEEP_MS: ${SLEEP_MS:-0}
+      OUT_CSV: ${OUT_CSV:-/out/results.csv}
+    volumes:
+      - ./perf-out:/out
+    profiles:
+      - moderate
+    cpus: "0.5"
+    mem_limit: 256m
