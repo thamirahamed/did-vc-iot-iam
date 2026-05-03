@@ -15,7 +15,9 @@ This repo contains minimal starter code and simple health checks. It avoids adva
 
 ## Revocation status
 
-Revocation is currently an MVP simple status lookup. The issuer stores revoked credential IDs in memory and exposes `/vc/revoke`, `/vc/status`, and `/vc/revoked`. The verifier checks the issuer status endpoint during authorization and denies revoked identity or capability credentials. This is not Fabric backed yet, and it is not an EVOKE accumulator; it can later be replaced or extended with accumulator or ledger anchored revocation.
+Each issued VC includes `credentialStatus`. Revocation is currently an MVP simple status lookup backed by a persistent local JSON registry at `REVOCATION_REGISTRY_PATH`, defaulting to `data/revocation_registry.json`. The issuer exposes `/vc/revoke`, `/vc/status`, and `/vc/revoked`, and the verifier checks both Identity VC and Capability VC revocation status during authorization.
+
+This completes local credential lifecycle support for the prototype. Fabric-backed revocation and EVOKE/accumulator-based revocation are not implemented yet; this registry can later be moved to Fabric or replaced with accumulator-based revocation.
 
 ## DID onboarding and resolution
 

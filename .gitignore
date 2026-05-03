@@ -4,4 +4,5 @@ results/
 *.csv
 data/
 data/did_registry.json
+data/revocation_registry.json
 *.jsonl

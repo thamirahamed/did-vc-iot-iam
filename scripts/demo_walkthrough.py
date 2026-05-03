@@ -373,7 +373,8 @@ def main() -> None:
     print_section("Phase 6: Revocation")
     print_step(step, "Revoke the Capability VC at the issuer.")
     step += 1
-    log("This MVP uses an issuer status lookup, not an EVOKE accumulator yet.")
+    log("This MVP uses a persistent local revocation registry, not an EVOKE accumulator yet.")
+    log("The issuer stores revoked credential IDs in data/revocation_registry.json.")
     log("-> POST /vc/revoke (issuer)")
     revoke_response = http_post_json(
         f"{ISSUER_BASE_URL}/vc/revoke",
@@ -400,7 +401,8 @@ def main() -> None:
 
     print_step(step, "Try the same valid request again.")
     step += 1
-    log("The verifier checks issuer revocation status before allowing access.")
+    log("The verifier checks the issuer status endpoint before allowing access.")
+    log("Restarting the issuer does not clear records stored in the local registry file.")
     log("-> POST /authorize (verifier)")
     nonce = f"nonce_{uuid.uuid4()}"
     revoked_signature_b64 = sign_nonce(device_private_key, nonce)

@@ -7,6 +7,7 @@ services:
       - ./.env.dev
     environment:
       DID_REGISTRY_PATH: /app/data/did_registry.json
+      REVOCATION_REGISTRY_PATH: /app/data/revocation_registry.json
     volumes:
       - ./data:/app/data
   verifier:

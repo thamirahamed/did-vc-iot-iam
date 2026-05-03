@@ -189,6 +189,35 @@ def main() -> None:
     log(f"Capability revoke response: {revoke_capability}")
     assert revoke_capability["revoked"] is True, f"expected revoked, got {revoke_capability}"
 
+    log("Checking revoked capability VC status endpoint")
+    capability_status = http_get_json(
+        f"{ISSUER_BASE_URL}/vc/status?{urlencode({'credential_id': capability_vc['id']})}"
+    )
+    log(f"Capability status response: {capability_status}")
+    assert capability_status["revoked"] is True, (
+        f"expected revoked status, got {capability_status}"
+    )
+
+    log("Checking revoked credential list endpoint")
+    revoked_list = http_get_json(f"{ISSUER_BASE_URL}/vc/revoked")
+    log(f"Revoked list response: {revoked_list}")
+    revoked_ids = {
+        record.get("credential_id") for record in revoked_list.get("revoked", [])
+    }
+    assert capability_vc["id"] in revoked_ids, (
+        f"expected capability VC in revoked list, got {revoked_list}"
+    )
+
+    log("Checking persistent revocation registry file")
+    revocation_registry = load_revocation_registry()
+    assert capability_vc["id"] in revocation_registry, (
+        f"expected capability VC in revocation registry file, got {revocation_registry}"
+    )
+    assert revocation_registry[capability_vc["id"]]["revoked"] is True, (
+        f"expected persisted revoked=true, got {revocation_registry[capability_vc['id']]}"
+    )
+    log("Persistence file check passed")
+
     log("Authorize test deny revoked capability VC case")
     payload_revoked_capability = build_authorize_payload(
         identity_vc,
@@ -420,6 +449,10 @@ def registry_path() -> Path:
     return Path("data/did_registry.json")
 
 
+def revocation_registry_path() -> Path:
+    return Path("data/revocation_registry.json")
+
+
 def load_registry() -> Dict[str, Any]:
     path = registry_path()
     if not path.exists():
@@ -448,6 +481,14 @@ def upsert_registry_did(did: str, did_document: Dict[str, Any]) -> None:
     registry = load_registry()
     registry[did] = did_document
     save_registry(registry)
+
+
+def load_revocation_registry() -> Dict[str, Any]:
+    path = revocation_registry_path()
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
 
 
 def build_authorize_payload(
