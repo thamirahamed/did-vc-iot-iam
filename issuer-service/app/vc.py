@@ -13,12 +13,17 @@ def issue_identity_vc(
     issuer_private_key: ed25519.Ed25519PrivateKey,
 ) -> dict:
     now = datetime.utcnow()
+    credential_id = f"urn:uuid:{uuid.uuid4()}"
     vc = {
-        "id": f"urn:uuid:{uuid.uuid4()}",
+        "id": credential_id,
         "type": ["VerifiableCredential", "IdentityCredential"],
         "issuer": issuer_did,
         "issuanceDate": now.isoformat(timespec="seconds") + "Z",
         "expirationDate": (now + timedelta(days=365)).isoformat(timespec="seconds") + "Z",
+        "credentialStatus": {
+            "id": f"urn:status:{credential_id}",
+            "type": "SimpleRevocationList2026",
+        },
         "credentialSubject": {
             "id": subject_did,
             "devicePublicKey": device_public_key,
@@ -48,12 +53,17 @@ def issue_capability_vc(
     issuer_private_key: ed25519.Ed25519PrivateKey,
 ) -> dict:
     now = datetime.utcnow()
+    credential_id = f"urn:uuid:{uuid.uuid4()}"
     vc = {
-        "id": f"urn:uuid:{uuid.uuid4()}",
+        "id": credential_id,
         "type": ["VerifiableCredential", "CapabilityCredential"],
         "issuer": issuer_did,
         "issuanceDate": now.isoformat(timespec="seconds") + "Z",
         "expirationDate": (now + timedelta(days=365)).isoformat(timespec="seconds") + "Z",
+        "credentialStatus": {
+            "id": f"urn:status:{credential_id}",
+            "type": "SimpleRevocationList2026",
+        },
         "credentialSubject": {
             "id": subject_did,
             "action": action,

@@ -2,3 +2,6 @@
 perf-out/
 results/
 *.csv
+data/
+data/did_registry.json
+*.jsonl

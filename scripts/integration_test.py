@@ -2,8 +2,10 @@ import base64
 import json
 import sys
 import uuid
+from pathlib import Path
 from typing import Any, Dict
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from cryptography.hazmat.primitives import serialization
@@ -28,11 +30,6 @@ def main() -> None:
     verifier_health = http_get_json(f"{VERIFIER_BASE_URL}/health")
     log(f"Verifier health: {verifier_health}")
 
-    log("Requesting subject DID from issuer")
-    subject = http_post_json(f"{ISSUER_BASE_URL}/did/create", {})
-    subject_did = subject["did"]
-    log(f"Subject DID: {subject_did}")
-
     log("Generating device keypair")
     device_private_key = ed25519.Ed25519PrivateKey.generate()
     device_public_key = device_private_key.public_key()
@@ -44,6 +41,29 @@ def main() -> None:
     )
     log("Device public key generated")
 
+    log("Requesting subject DID from issuer")
+    subject = http_post_json(
+        f"{ISSUER_BASE_URL}/did/create",
+        {"device_public_key": device_public_key_b64},
+    )
+    subject_did = subject["did"]
+    did_document = subject["did_document"]
+    assert did_document["id"] == subject_did, f"unexpected DID document: {did_document}"
+    assert did_document_key(did_document) == device_public_key_b64, (
+        f"DID document key mismatch: {did_document}"
+    )
+    log(f"Subject DID: {subject_did}")
+
+    log("Resolving subject DID")
+    did_resolution = http_get_json(
+        f"{ISSUER_BASE_URL}/did/resolve?{urlencode({'did': subject_did})}"
+    )
+    log(f"DID resolve response: {did_resolution}")
+    assert did_resolution["found"] is True, f"expected DID found, got {did_resolution}"
+    assert did_resolution["did_document"] == did_document, (
+        f"resolved document mismatch: {did_resolution}"
+    )
+
     log("Requesting identity VC from issuer")
     identity_vc = http_post_json(
         f"{ISSUER_BASE_URL}/vc/issue/identity",
@@ -54,6 +74,39 @@ def main() -> None:
     )
     identity_id = identity_vc.get("id", "unknown")
     log(f"Identity VC issued, id: {identity_id}")
+
+    log("Identity VC issuance should fail for unregistered DID")
+    unregistered_response = http_post_expect_error(
+        f"{ISSUER_BASE_URL}/vc/issue/identity",
+        {
+            "subject_did": f"did:iot:{uuid.uuid4()}",
+            "device_public_key": device_public_key_b64,
+        },
+    )
+    log(f"Unregistered DID response: {unregistered_response}")
+    assert unregistered_response["detail"] == "DID not registered", (
+        f"unexpected error: {unregistered_response}"
+    )
+
+    log("Identity VC issuance should fail if key does not match DID document")
+    wrong_private_key = ed25519.Ed25519PrivateKey.generate()
+    wrong_public_key_b64 = b64encode(
+        wrong_private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+    )
+    wrong_key_response = http_post_expect_error(
+        f"{ISSUER_BASE_URL}/vc/issue/identity",
+        {
+            "subject_did": subject_did,
+            "device_public_key": wrong_public_key_b64,
+        },
+    )
+    log(f"Wrong DID key response: {wrong_key_response}")
+    assert wrong_key_response["detail"] == "device public key does not match DID document", (
+        f"unexpected error: {wrong_key_response}"
+    )
 
     log("Requesting capability VC from issuer")
     capability_vc = http_post_json(
@@ -79,6 +132,163 @@ def main() -> None:
     allow = http_post_json(f"{VERIFIER_BASE_URL}/authorize", payload)
     log(f"Allow response: {allow}")
     assert allow["decision"] == "allow", f"expected allow, got {allow}"
+
+    log("Authorize test deny missing DID registry entry case")
+    original_document = remove_registry_did(subject_did)
+    try:
+        payload_missing_did = build_authorize_payload(
+            identity_vc,
+            capability_vc,
+            device_private_key,
+            "read",
+            "iot:device:example",
+        )
+        deny_missing_did = http_post_json(
+            f"{VERIFIER_BASE_URL}/authorize", payload_missing_did
+        )
+        log(f"Deny missing DID response: {deny_missing_did}")
+        assert deny_missing_did == {
+            "decision": "deny",
+            "reason": "device DID not registered",
+        }, f"expected DID not registered deny, got {deny_missing_did}"
+    finally:
+        if original_document:
+            upsert_registry_did(subject_did, original_document)
+
+    log("Authorize test deny DID document key mismatch case")
+    mismatch_document = json.loads(json.dumps(did_document))
+    mismatch_document["verificationMethod"][0]["publicKeyBase64Url"] = wrong_public_key_b64
+    upsert_registry_did(subject_did, mismatch_document)
+    try:
+        payload_key_mismatch = build_authorize_payload(
+            identity_vc,
+            capability_vc,
+            device_private_key,
+            "read",
+            "iot:device:example",
+        )
+        deny_key_mismatch = http_post_json(
+            f"{VERIFIER_BASE_URL}/authorize", payload_key_mismatch
+        )
+        log(f"Deny DID key mismatch response: {deny_key_mismatch}")
+        assert deny_key_mismatch == {
+            "decision": "deny",
+            "reason": "identity VC key does not match DID document",
+        }, f"expected DID key mismatch deny, got {deny_key_mismatch}"
+    finally:
+        upsert_registry_did(subject_did, did_document)
+
+    log("Revoking capability VC")
+    revoke_capability = http_post_json(
+        f"{ISSUER_BASE_URL}/vc/revoke",
+        {
+            "credential_id": capability_vc["id"],
+            "reason": "integration test capability revocation",
+        },
+    )
+    log(f"Capability revoke response: {revoke_capability}")
+    assert revoke_capability["revoked"] is True, f"expected revoked, got {revoke_capability}"
+
+    log("Authorize test deny revoked capability VC case")
+    payload_revoked_capability = build_authorize_payload(
+        identity_vc,
+        capability_vc,
+        device_private_key,
+        "read",
+        "iot:device:example",
+    )
+    deny_revoked_capability = http_post_json(
+        f"{VERIFIER_BASE_URL}/authorize", payload_revoked_capability
+    )
+    log(f"Deny revoked capability response: {deny_revoked_capability}")
+    assert deny_revoked_capability == {
+        "decision": "deny",
+        "reason": "capability credential revoked",
+    }, f"expected capability revocation deny, got {deny_revoked_capability}"
+
+    log("Requesting replacement capability VC from issuer")
+    capability_vc = http_post_json(
+        f"{ISSUER_BASE_URL}/vc/issue/capability",
+        {
+            "subject_did": subject_did,
+            "action": "read",
+            "resource": "iot:device:example",
+        },
+    )
+    log(f"Replacement capability VC issued, id: {capability_vc.get('id', 'unknown')}")
+
+    log("Authorize test allow replacement capability VC case")
+    payload_replacement_capability = build_authorize_payload(
+        identity_vc,
+        capability_vc,
+        device_private_key,
+        "read",
+        "iot:device:example",
+    )
+    allow_replacement = http_post_json(
+        f"{VERIFIER_BASE_URL}/authorize", payload_replacement_capability
+    )
+    log(f"Replacement allow response: {allow_replacement}")
+    assert allow_replacement["decision"] == "allow", (
+        f"expected allow, got {allow_replacement}"
+    )
+
+    log("Revoking identity VC")
+    revoke_identity = http_post_json(
+        f"{ISSUER_BASE_URL}/vc/revoke",
+        {
+            "credential_id": identity_vc["id"],
+            "reason": "integration test identity revocation",
+        },
+    )
+    log(f"Identity revoke response: {revoke_identity}")
+    assert revoke_identity["revoked"] is True, f"expected revoked, got {revoke_identity}"
+
+    log("Authorize test deny revoked identity VC case")
+    payload_revoked_identity = build_authorize_payload(
+        identity_vc,
+        capability_vc,
+        device_private_key,
+        "read",
+        "iot:device:example",
+    )
+    deny_revoked_identity = http_post_json(
+        f"{VERIFIER_BASE_URL}/authorize", payload_revoked_identity
+    )
+    log(f"Deny revoked identity response: {deny_revoked_identity}")
+    assert deny_revoked_identity == {
+        "decision": "deny",
+        "reason": "identity credential revoked",
+    }, f"expected identity revocation deny, got {deny_revoked_identity}"
+
+    log("Issuing fresh identity and capability VCs for remaining deny cases")
+    fresh_subject = http_post_json(
+        f"{ISSUER_BASE_URL}/did/create",
+        {"device_public_key": device_public_key_b64},
+    )
+    subject_did = fresh_subject["did"]
+    identity_vc = http_post_json(
+        f"{ISSUER_BASE_URL}/vc/issue/identity",
+        {
+            "subject_did": subject_did,
+            "device_public_key": device_public_key_b64,
+        },
+    )
+    capability_vc = http_post_json(
+        f"{ISSUER_BASE_URL}/vc/issue/capability",
+        {
+            "subject_did": subject_did,
+            "action": "read",
+            "resource": "iot:device:example",
+        },
+    )
+    payload = build_authorize_payload(
+        identity_vc,
+        capability_vc,
+        device_private_key,
+        "read",
+        "iot:device:example",
+    )
 
     log("Authorize test deny wrong action case")
     payload_wrong_action = dict(payload)
@@ -108,7 +318,10 @@ def main() -> None:
     )
 
     log("Authorize test deny mismatched identity/capability subject DID case")
-    other_subject = http_post_json(f"{ISSUER_BASE_URL}/did/create", {})
+    other_subject = http_post_json(
+        f"{ISSUER_BASE_URL}/did/create",
+        {"device_public_key": device_public_key_b64},
+    )
     other_identity_vc = http_post_json(
         f"{ISSUER_BASE_URL}/vc/issue/identity",
         {
@@ -175,8 +388,66 @@ def http_post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return json.loads(body)
 
 
+def http_post_expect_error(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    data = json.dumps(payload).encode("utf-8")
+    request = Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            body = response.read().decode("utf-8")
+            raise RuntimeError(f"expected error response, got {response.status} {body}")
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8")
+    return json.loads(body)
+
+
 def b64encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii")
+
+
+def did_document_key(did_document: Dict[str, Any]) -> str:
+    methods = did_document.get("verificationMethod", [])
+    if not methods:
+        return ""
+    return methods[0].get("publicKeyBase64Url", "")
+
+
+def registry_path() -> Path:
+    return Path("data/did_registry.json")
+
+
+def load_registry() -> Dict[str, Any]:
+    path = registry_path()
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def save_registry(registry: Dict[str, Any]) -> None:
+    path = registry_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    with temp_path.open("w", encoding="utf-8") as handle:
+        json.dump(registry, handle, indent=2, sort_keys=True)
+    temp_path.replace(path)
+
+
+def remove_registry_did(did: str) -> Dict[str, Any]:
+    registry = load_registry()
+    original = registry.pop(did, None)
+    save_registry(registry)
+    return original
+
+
+def upsert_registry_did(did: str, did_document: Dict[str, Any]) -> None:
+    registry = load_registry()
+    registry[did] = did_document
+    save_registry(registry)
 
 
 def build_authorize_payload(

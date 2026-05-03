@@ -13,6 +13,16 @@ Prototype mono repo for a DID and Verifiable Credential based IAM system using H
 
 This repo contains minimal starter code and simple health checks. It avoids advanced features like DIDComm, wallets, or zero knowledge proofs.
 
+## Revocation status
+
+Revocation is currently an MVP simple status lookup. The issuer stores revoked credential IDs in memory and exposes `/vc/revoke`, `/vc/status`, and `/vc/revoked`. The verifier checks the issuer status endpoint during authorization and denies revoked identity or capability credentials. This is not Fabric backed yet, and it is not an EVOKE accumulator; it can later be replaced or extended with accumulator or ledger anchored revocation.
+
+## DID onboarding and resolution
+
+The device owns its Ed25519 keypair. During onboarding the device sends its public key to the issuer, and the issuer creates a `did:iot:<uuid>` DID document that stores that key as `publicKeyBase64Url`. DID documents are stored in a local persistent JSON registry at `DID_REGISTRY_PATH`, defaulting to `data/did_registry.json`.
+
+Identity VC issuance requires the DID to be registered and the requested `device_public_key` to match the DID document. During authorization, the verifier resolves the DID through the issuer, checks that the DID document key matches the signed Identity VC key, and then verifies the device nonce signature with the resolved DID document key. This registry is local for now and can later be moved to Fabric; Fabric DID registry support is not implemented yet.
+
 ## Automated Testing
 
 Generate issuer keys and create `.env.dev`:

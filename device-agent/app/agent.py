@@ -84,6 +84,7 @@ def load_env() -> dict:
         "mode": os.getenv("MODE", "perf").strip().lower(),
         "pause": os.getenv("PAUSE", "1") == "1",
         "show_json": os.getenv("SHOW_JSON", "0") == "1",
+        "demo_revoke": os.getenv("DEMO_REVOKE", "0") == "1",
         "identity_vc_json": os.getenv("IDENTITY_VC_JSON", ""),
         "capability_vc_json": os.getenv("CAPABILITY_VC_JSON", ""),
         "debug": bool(os.getenv("DEBUG", "").strip()),
@@ -112,7 +113,10 @@ def prepare_credentials(
         except json.JSONDecodeError as exc:
             raise RuntimeError("IDENTITY_VC_JSON or CAPABILITY_VC_JSON is not valid JSON") from exc
     else:
-        subject = http_post_json(f"{issuer_url}/did/create", {})
+        subject = http_post_json(
+            f"{issuer_url}/did/create",
+            {"device_public_key": device_public_key_b64},
+        )
         subject_did = subject["did"]
         identity_vc = http_post_json(
             f"{issuer_url}/vc/issue/identity",
@@ -250,6 +254,7 @@ def run_demo(
     resource = settings["resource"]
     pause_enabled = settings["pause"]
     show_json = settings["show_json"]
+    demo_revoke = settings["demo_revoke"]
 
     step = 1
     section(step, "Health checks")
@@ -281,12 +286,27 @@ def run_demo(
 
     step += 1
     section(step, "DID creation")
-    log("Creating a DID for the device.")
+    log("Creating and registering a DID document for the device public key.")
     api_call_line("POST", "/did/create")
-    subject = http_post_json(f"{issuer_url}/did/create", {})
+    subject = http_post_json(
+        f"{issuer_url}/did/create",
+        {"device_public_key": device_public_key_b64},
+    )
     subject_did = subject.get("did", "unknown")
     summary_kv("DID", subject_did)
+    summary_kv("registered public key prefix", subject.get("public_key", "")[:12])
     maybe_print_json(subject, show_json)
+    pause_if_enabled(pause_enabled)
+
+    step += 1
+    section(step, "DID resolution")
+    log("Resolving the DID document from the issuer registry.")
+    api_call_line("GET", "/did/resolve")
+    did_resolution = http_get_json(f"{issuer_url}/did/resolve?did={subject_did}")
+    did_document = did_resolution.get("did_document", {})
+    summary_kv("found", str(did_resolution.get("found", False)))
+    summary_kv("document id", did_document.get("id", "unknown"))
+    maybe_print_json(did_resolution, show_json)
     pause_if_enabled(pause_enabled)
 
     step += 1
@@ -367,6 +387,24 @@ def run_demo(
     run_case("Authorization case A (valid allow)", "allow", action)
     run_case("Authorization case B (wrong action)", "deny", "write")
     run_case("Authorization case C (tampered signature)", "deny", action, True)
+
+    if demo_revoke:
+        step += 1
+        section(step, "Revocation case (capability revoked)")
+        api_call_line("POST", "/vc/revoke")
+        revoke_response = http_post_json(
+            f"{issuer_url}/vc/revoke",
+            {
+                "credential_id": capability_vc["id"],
+                "reason": "device agent demo revocation",
+            },
+        )
+        summary_kv("revoked", str(revoke_response.get("revoked", False)))
+        summary_kv("credential_id", revoke_response.get("credential_id", "unknown"))
+        maybe_print_json(revoke_response, show_json)
+        pause_if_enabled(pause_enabled)
+
+        run_case("Authorization case D (revoked capability)", "deny", action)
 
     return identity_vc, capability_vc, device_private_key
 

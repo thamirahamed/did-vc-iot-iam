@@ -6,7 +6,9 @@ from typing import Any, Dict, Tuple
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+from .did_resolver import resolve_did
 from .models import AuthorizeRequest, AuthorizeResponse
+from .revocation_client import check_revoked
 
 
 def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
@@ -46,11 +48,33 @@ def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
     if identity_subject.get("id") != capability_subject.get("id"):
         return AuthorizeResponse(decision="deny", reason="subject DID mismatch")
 
+    did_document, reason = resolve_did(identity_subject["id"])
+    if not did_document:
+        return AuthorizeResponse(decision="deny", reason=reason)
+
+    did_document_key = _extract_did_document_key(did_document)
+    if not did_document_key:
+        return AuthorizeResponse(decision="deny", reason="device DID not registered")
+
+    if identity_subject.get("devicePublicKey") != did_document_key:
+        return AuthorizeResponse(
+            decision="deny",
+            reason="identity VC key does not match DID document",
+        )
+
     ok, reason = _verify_device_signature(
         payload.nonce,
         payload.device_signature,
-        identity_subject.get("devicePublicKey", ""),
+        did_document_key,
     )
+    if not ok:
+        return AuthorizeResponse(decision="deny", reason=reason)
+
+    ok, reason = _check_revocation(identity_vc, "identity")
+    if not ok:
+        return AuthorizeResponse(decision="deny", reason=reason)
+
+    ok, reason = _check_revocation(capability_vc, "capability")
     if not ok:
         return AuthorizeResponse(decision="deny", reason=reason)
 
@@ -103,9 +127,17 @@ def _validate_common_vc(vc: Dict[str, Any], expected_type: str) -> Tuple[bool, s
     if "VerifiableCredential" not in type_set or expected_type not in type_set:
         return False, "invalid vc type"
 
-    for field in ("issuer", "issuanceDate", "expirationDate"):
+    for field in ("id", "issuer", "issuanceDate", "expirationDate"):
         if not vc.get(field):
             return False, f"missing {field}"
+
+    status = vc.get("credentialStatus")
+    if not isinstance(status, dict):
+        return False, "missing credentialStatus"
+    if not status.get("id"):
+        return False, "missing credentialStatus.id"
+    if status.get("type") != "SimpleRevocationList2026":
+        return False, "invalid credentialStatus.type"
 
     subject = vc.get("credentialSubject")
     if not isinstance(subject, dict):
@@ -122,6 +154,30 @@ def _validate_common_vc(vc: Dict[str, Any], expected_type: str) -> Tuple[bool, s
         return False, "missing proof verificationMethod"
 
     return True, ""
+
+
+def _check_revocation(vc: Dict[str, Any], label: str) -> Tuple[bool, str]:
+    credential_id = vc.get("id")
+    if not credential_id:
+        return False, "missing credential id"
+
+    revoked, reason = check_revoked(credential_id)
+    if reason:
+        return False, reason
+    if revoked:
+        return False, f"{label} credential revoked"
+
+    return True, ""
+
+
+def _extract_did_document_key(did_document: Dict[str, Any]) -> str:
+    verification_methods = did_document.get("verificationMethod", [])
+    if not isinstance(verification_methods, list) or not verification_methods:
+        return ""
+    method = verification_methods[0]
+    if not isinstance(method, dict):
+        return ""
+    return method.get("publicKeyBase64Url", "")
 
 
 def _verify_issuer_signature(vc: Dict[str, Any], issuer_key_b64: str) -> Tuple[bool, str]:

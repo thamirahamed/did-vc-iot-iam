@@ -5,9 +5,19 @@ services:
       - "8000:8000"
     env_file:
       - ./.env.dev
+    environment:
+      DID_REGISTRY_PATH: /app/data/did_registry.json
+    volumes:
+      - ./data:/app/data
   verifier:
     build: ./verifier-service
     ports:
       - "8001:8000"
     env_file:
       - ./.env.dev
+    environment:
+      ISSUER_URL: http://issuer:8000
+      REVOCATION_FAIL_CLOSED: "true"
+      DID_RESOLUTION_FAIL_CLOSED: "true"
+    depends_on:
+      - issuer
