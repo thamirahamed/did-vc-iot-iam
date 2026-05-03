@@ -17,29 +17,45 @@ def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
             reason="issuer public key not configured",
         )
 
-    vc = payload.capability_vc
-    ok, reason = _validate_capability_vc(vc)
+    identity_vc = payload.identity_vc
+    capability_vc = payload.capability_vc
+
+    ok, reason = _validate_identity_vc(identity_vc)
     if not ok:
         return AuthorizeResponse(decision="deny", reason=reason)
 
-    ok, reason = _verify_issuer_signature(vc, issuer_key_b64)
+    ok, reason = _verify_issuer_signature(identity_vc, issuer_key_b64)
     if not ok:
         return AuthorizeResponse(decision="deny", reason=reason)
+
+    ok, reason = _validate_capability_vc(capability_vc)
+    if not ok:
+        return AuthorizeResponse(decision="deny", reason=reason)
+
+    ok, reason = _verify_issuer_signature(capability_vc, issuer_key_b64)
+    if not ok:
+        return AuthorizeResponse(decision="deny", reason=reason)
+
+    for vc in (identity_vc, capability_vc):
+        ok, reason = _check_expiration(vc)
+        if not ok:
+            return AuthorizeResponse(decision="deny", reason=reason)
+
+    identity_subject = identity_vc["credentialSubject"]
+    capability_subject = capability_vc["credentialSubject"]
+    if identity_subject.get("id") != capability_subject.get("id"):
+        return AuthorizeResponse(decision="deny", reason="subject DID mismatch")
 
     ok, reason = _verify_device_signature(
         payload.nonce,
         payload.device_signature,
-        payload.device_public_key,
+        identity_subject.get("devicePublicKey", ""),
     )
     if not ok:
         return AuthorizeResponse(decision="deny", reason=reason)
 
-    ok, reason = _check_expiration(vc)
-    if not ok:
-        return AuthorizeResponse(decision="deny", reason=reason)
-
     ok, reason = _enforce_capability(
-        vc,
+        capability_vc,
         payload.requested_action,
         payload.requested_resource,
     )
@@ -49,7 +65,33 @@ def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
     return AuthorizeResponse(decision="allow", reason="authorized")
 
 
+def _validate_identity_vc(vc: Dict[str, Any]) -> Tuple[bool, str]:
+    ok, reason = _validate_common_vc(vc, "IdentityCredential")
+    if not ok:
+        return False, reason
+
+    subject = vc.get("credentialSubject", {})
+    for field in ("id", "devicePublicKey"):
+        if not subject.get(field):
+            return False, f"missing credentialSubject.{field}"
+
+    return True, ""
+
+
 def _validate_capability_vc(vc: Dict[str, Any]) -> Tuple[bool, str]:
+    ok, reason = _validate_common_vc(vc, "CapabilityCredential")
+    if not ok:
+        return False, reason
+
+    subject = vc.get("credentialSubject", {})
+    for field in ("id", "action", "resource"):
+        if not subject.get(field):
+            return False, f"missing credentialSubject.{field}"
+
+    return True, ""
+
+
+def _validate_common_vc(vc: Dict[str, Any], expected_type: str) -> Tuple[bool, str]:
     vc_type = vc.get("type")
     if isinstance(vc_type, list):
         type_set = set(vc_type)
@@ -58,7 +100,7 @@ def _validate_capability_vc(vc: Dict[str, Any]) -> Tuple[bool, str]:
     else:
         return False, "missing vc type"
 
-    if "VerifiableCredential" not in type_set or "CapabilityCredential" not in type_set:
+    if "VerifiableCredential" not in type_set or expected_type not in type_set:
         return False, "invalid vc type"
 
     for field in ("issuer", "issuanceDate", "expirationDate"):
@@ -68,10 +110,6 @@ def _validate_capability_vc(vc: Dict[str, Any]) -> Tuple[bool, str]:
     subject = vc.get("credentialSubject")
     if not isinstance(subject, dict):
         return False, "missing credentialSubject"
-
-    for field in ("id", "action", "resource"):
-        if not subject.get(field):
-            return False, f"missing credentialSubject.{field}"
 
     proof = vc.get("proof")
     if not isinstance(proof, dict):
@@ -150,7 +188,7 @@ def _check_expiration(vc: Dict[str, Any]) -> Tuple[bool, str]:
         return False, "invalid expirationDate"
 
     if expiration_dt <= datetime.now(timezone.utc):
-        return False, "capability expired"
+        return False, "credential expired"
 
     return True, ""
 

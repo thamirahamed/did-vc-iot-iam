@@ -84,41 +84,54 @@ def load_env() -> dict:
         "mode": os.getenv("MODE", "perf").strip().lower(),
         "pause": os.getenv("PAUSE", "1") == "1",
         "show_json": os.getenv("SHOW_JSON", "0") == "1",
+        "identity_vc_json": os.getenv("IDENTITY_VC_JSON", ""),
         "capability_vc_json": os.getenv("CAPABILITY_VC_JSON", ""),
         "debug": bool(os.getenv("DEBUG", "").strip()),
     }
 
 
-def prepare_capability_vc(
+def prepare_credentials(
     mode: str,
     issuer_url: str,
     action: str,
     resource: str,
+    identity_vc_json: str,
     capability_vc_json: str,
+    device_public_key_b64: str,
     debug: bool,
     out_dir: str,
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     if mode == "authorize_only":
+        if not identity_vc_json:
+            raise RuntimeError("IDENTITY_VC_JSON is required for authorize_only mode")
         if not capability_vc_json:
             raise RuntimeError("CAPABILITY_VC_JSON is required for authorize_only mode")
         try:
+            identity_vc = json.loads(identity_vc_json)
             capability_vc = json.loads(capability_vc_json)
         except json.JSONDecodeError as exc:
-            raise RuntimeError("CAPABILITY_VC_JSON is not valid JSON") from exc
+            raise RuntimeError("IDENTITY_VC_JSON or CAPABILITY_VC_JSON is not valid JSON") from exc
     else:
         subject = http_post_json(f"{issuer_url}/did/create", {})
         subject_did = subject["did"]
+        identity_vc = http_post_json(
+            f"{issuer_url}/vc/issue/identity",
+            {"subject_did": subject_did, "device_public_key": device_public_key_b64},
+        )
         capability_vc = http_post_json(
             f"{issuer_url}/vc/issue/capability",
             {"subject_did": subject_did, "action": action, "resource": resource},
         )
 
     if debug:
+        path = os.path.join(out_dir, "identity_vc.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(identity_vc, handle, indent=2, sort_keys=True)
         path = os.path.join(out_dir, "capability_vc.json")
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(capability_vc, handle, indent=2, sort_keys=True)
 
-    return capability_vc
+    return identity_vc, capability_vc
 
 
 def section(step_num: int, title: str) -> None:
@@ -150,9 +163,9 @@ def pause_if_enabled(enabled: bool) -> None:
 
 def authorize_once(
     verifier_url: str,
+    identity_vc: Dict[str, Any],
     capability_vc: Dict[str, Any],
     device_private_key: ed25519.Ed25519PrivateKey,
-    device_public_key_b64: str,
     action: str,
     resource: str,
 ) -> Tuple[float, float, str, str]:
@@ -164,10 +177,10 @@ def authorize_once(
     signature_b64 = b64encode(signature)
 
     payload: Dict[str, Any] = {
+        "identity_vc": identity_vc,
         "capability_vc": capability_vc,
         "nonce": nonce,
         "device_signature": signature_b64,
-        "device_public_key": device_public_key_b64,
         "requested_action": action,
         "requested_resource": resource,
     }
@@ -189,9 +202,9 @@ def authorize_once(
 
 def run_performance(
     verifier_url: str,
+    identity_vc: Dict[str, Any],
     capability_vc: Dict[str, Any],
     device_private_key: ed25519.Ed25519PrivateKey,
-    device_public_key_b64: str,
     action: str,
     resource: str,
     warmup: int,
@@ -203,9 +216,9 @@ def run_performance(
     for idx in range(total_iterations):
         t_sign_ms, t_authorize_ms, decision, reason = authorize_once(
             verifier_url,
+            identity_vc,
             capability_vc,
             device_private_key,
-            device_public_key_b64,
             action,
             resource,
         )
@@ -228,7 +241,9 @@ def run_performance(
     return rows
 
 
-def run_demo(settings: dict) -> Tuple[Dict[str, Any], ed25519.Ed25519PrivateKey, str]:
+def run_demo(
+    settings: dict,
+) -> Tuple[Dict[str, Any], Dict[str, Any], ed25519.Ed25519PrivateKey]:
     issuer_url = settings["issuer_url"]
     verifier_url = settings["verifier_url"]
     action = settings["action"]
@@ -250,48 +265,7 @@ def run_demo(settings: dict) -> Tuple[Dict[str, Any], ed25519.Ed25519PrivateKey,
     pause_if_enabled(pause_enabled)
 
     step += 1
-    section(step, "DID creation")
-    log("Creating a DID for the device.")
-    api_call_line("POST", "/did/create")
-    subject = http_post_json(f"{issuer_url}/did/create", {})
-    subject_did = subject.get("did", "unknown")
-    public_key_prefix = subject.get("public_key", "")[:12] or "n/a"
-    summary_kv("DID", subject_did)
-    summary_kv("public key prefix", public_key_prefix)
-    maybe_print_json(subject, show_json)
-    pause_if_enabled(pause_enabled)
-
-    step += 1
-    section(step, "Identity VC issuance")
-    log("Issuing an Identity VC for the device.")
-    api_call_line("POST", "/vc/issue/identity")
-    identity_vc = http_post_json(
-        f"{issuer_url}/vc/issue/identity", {"subject_did": subject_did}
-    )
-    summary_kv("VC id", identity_vc.get("id", "unknown"))
-    summary_kv("issuer", identity_vc.get("issuer", "unknown"))
-    summary_kv("subject", subject_did)
-    summary_kv("expiry", identity_vc.get("expiration_date", "unknown"))
-    maybe_print_json(identity_vc, show_json)
-    pause_if_enabled(pause_enabled)
-
-    step += 1
-    section(step, "Capability VC issuance")
-    log("Issuing a Capability VC with the requested action and resource.")
-    api_call_line("POST", "/vc/issue/capability")
-    capability_vc = http_post_json(
-        f"{issuer_url}/vc/issue/capability",
-        {"subject_did": subject_did, "action": action, "resource": resource},
-    )
-    summary_kv("VC id", capability_vc.get("id", "unknown"))
-    summary_kv("action", capability_vc.get("action", action))
-    summary_kv("resource", capability_vc.get("resource", resource))
-    summary_kv("expiry", capability_vc.get("expiration_date", "unknown"))
-    maybe_print_json(capability_vc, show_json)
-    pause_if_enabled(pause_enabled)
-
-    step += 1
-    section(step, "Proof of possession setup")
+    section(step, "Device keypair generation")
     log("Generating a device Ed25519 keypair locally.")
     log("The private key stays on the device.")
     device_private_key = ed25519.Ed25519PrivateKey.generate()
@@ -303,7 +277,55 @@ def run_demo(settings: dict) -> Tuple[Dict[str, Any], ed25519.Ed25519PrivateKey,
         )
     )
     summary_kv("public key fingerprint", device_public_key_b64[:12])
+    pause_if_enabled(pause_enabled)
+
+    step += 1
+    section(step, "DID creation")
+    log("Creating a DID for the device.")
+    api_call_line("POST", "/did/create")
+    subject = http_post_json(f"{issuer_url}/did/create", {})
+    subject_did = subject.get("did", "unknown")
+    summary_kv("DID", subject_did)
+    maybe_print_json(subject, show_json)
+    pause_if_enabled(pause_enabled)
+
+    step += 1
+    section(step, "Identity VC issuance")
+    log("Issuing an Identity VC that binds the DID to the device public key.")
+    api_call_line("POST", "/vc/issue/identity")
+    identity_vc = http_post_json(
+        f"{issuer_url}/vc/issue/identity",
+        {"subject_did": subject_did, "device_public_key": device_public_key_b64},
+    )
+    identity_subject = identity_vc.get("credentialSubject", {})
+    summary_kv("VC id", identity_vc.get("id", "unknown"))
+    summary_kv("issuer", identity_vc.get("issuer", "unknown"))
+    summary_kv("subject", identity_subject.get("id", "unknown"))
+    summary_kv("bound public key prefix", identity_subject.get("devicePublicKey", "")[:12])
+    summary_kv("expiry", identity_vc.get("expirationDate", "unknown"))
+    maybe_print_json(identity_vc, show_json)
+    pause_if_enabled(pause_enabled)
+
+    step += 1
+    section(step, "Capability VC issuance")
+    log("Issuing a Capability VC with the requested action and resource.")
+    api_call_line("POST", "/vc/issue/capability")
+    capability_vc = http_post_json(
+        f"{issuer_url}/vc/issue/capability",
+        {"subject_did": subject_did, "action": action, "resource": resource},
+    )
+    capability_subject = capability_vc.get("credentialSubject", {})
+    summary_kv("VC id", capability_vc.get("id", "unknown"))
+    summary_kv("action", capability_subject.get("action", action))
+    summary_kv("resource", capability_subject.get("resource", resource))
+    summary_kv("expiry", capability_vc.get("expirationDate", "unknown"))
+    maybe_print_json(capability_vc, show_json)
+    pause_if_enabled(pause_enabled)
+
+    step += 1
+    section(step, "Proof of possession setup")
     log("Nonce = one-time challenge to prevent replay attacks.")
+    log("The verifier will use devicePublicKey from the signed Identity VC.")
     pause_if_enabled(pause_enabled)
 
     def run_case(
@@ -320,10 +342,10 @@ def run_demo(settings: dict) -> Tuple[Dict[str, Any], ed25519.Ed25519PrivateKey,
             signature_b64 = tamper_b64(signature_b64)
 
         payload = {
+            "identity_vc": identity_vc,
             "capability_vc": capability_vc,
             "nonce": nonce,
             "device_signature": signature_b64,
-            "device_public_key": device_public_key_b64,
             "requested_action": requested_action,
             "requested_resource": resource,
         }
@@ -346,7 +368,7 @@ def run_demo(settings: dict) -> Tuple[Dict[str, Any], ed25519.Ed25519PrivateKey,
     run_case("Authorization case B (wrong action)", "deny", "write")
     run_case("Authorization case C (tampered signature)", "deny", action, True)
 
-    return capability_vc, device_private_key, device_public_key_b64
+    return identity_vc, capability_vc, device_private_key
 
 
 def main() -> None:
@@ -360,6 +382,7 @@ def main() -> None:
     sleep_ms = settings["sleep_ms"]
     out_csv = settings["out_csv"]
     mode = settings["mode"]
+    identity_vc_json = settings["identity_vc_json"]
     capability_vc_json = settings["capability_vc_json"]
     debug = settings["debug"]
 
@@ -373,26 +396,16 @@ def main() -> None:
     if mode in ("perf", "full", "authorize_only"):
         log(f"Device agent starting, mode={mode}")
 
+    identity_vc = None
     capability_vc = None
     device_private_key = None
-    device_public_key_b64 = ""
 
     if mode == "demo":
-        capability_vc, device_private_key, device_public_key_b64 = run_demo(settings)
+        identity_vc, capability_vc, device_private_key = run_demo(settings)
     else:
         if mode in ("perf", "full"):
             wait_for_service(f"{issuer_url}/health")
         wait_for_service(f"{verifier_url}/health")
-
-        capability_vc = prepare_capability_vc(
-            mode,
-            issuer_url,
-            action,
-            resource,
-            capability_vc_json,
-            debug,
-            out_dir,
-        )
 
         device_private_key = ed25519.Ed25519PrivateKey.generate()
         device_public_key = device_private_key.public_key()
@@ -403,15 +416,27 @@ def main() -> None:
             )
         )
 
+        identity_vc, capability_vc = prepare_credentials(
+            mode,
+            issuer_url,
+            action,
+            resource,
+            identity_vc_json,
+            capability_vc_json,
+            device_public_key_b64,
+            debug,
+            out_dir,
+        )
+
     if mode == "demo":
         log("Now running performance evaluation.")
         log(f"PERF_RUNS = {runs}")
 
     rows = run_performance(
         verifier_url,
+        identity_vc,
         capability_vc,
         device_private_key,
-        device_public_key_b64,
         action,
         resource,
         warmup,

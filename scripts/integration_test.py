@@ -33,6 +33,28 @@ def main() -> None:
     subject_did = subject["did"]
     log(f"Subject DID: {subject_did}")
 
+    log("Generating device keypair")
+    device_private_key = ed25519.Ed25519PrivateKey.generate()
+    device_public_key = device_private_key.public_key()
+    device_public_key_b64 = b64encode(
+        device_public_key.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+    )
+    log("Device public key generated")
+
+    log("Requesting identity VC from issuer")
+    identity_vc = http_post_json(
+        f"{ISSUER_BASE_URL}/vc/issue/identity",
+        {
+            "subject_did": subject_did,
+            "device_public_key": device_public_key_b64,
+        },
+    )
+    identity_id = identity_vc.get("id", "unknown")
+    log(f"Identity VC issued, id: {identity_id}")
+
     log("Requesting capability VC from issuer")
     capability_vc = http_post_json(
         f"{ISSUER_BASE_URL}/vc/issue/capability",
@@ -45,29 +67,13 @@ def main() -> None:
     cap_id = capability_vc.get("id", "unknown")
     log(f"Capability VC issued, id: {cap_id}")
 
-    log("Generating device keypair")
-    device_private_key = ed25519.Ed25519PrivateKey.generate()
-    device_public_key = device_private_key.public_key()
-    device_public_key_b64 = b64encode(
-        device_public_key.public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
-        )
+    payload = build_authorize_payload(
+        identity_vc,
+        capability_vc,
+        device_private_key,
+        "read",
+        "iot:device:example",
     )
-    log("Device public key generated")
-
-    nonce = f"nonce_{uuid.uuid4()}"
-    device_signature = device_private_key.sign(nonce.encode("utf-8"))
-    device_signature_b64 = b64encode(device_signature)
-
-    payload: Dict[str, Any] = {
-        "capability_vc": capability_vc,
-        "nonce": nonce,
-        "device_signature": device_signature_b64,
-        "device_public_key": device_public_key_b64,
-        "requested_action": "read",
-        "requested_resource": "iot:device:example",
-    }
 
     log("Authorize test allow case")
     allow = http_post_json(f"{VERIFIER_BASE_URL}/authorize", payload)
@@ -81,9 +87,57 @@ def main() -> None:
     log(f"Deny wrong action response: {deny_action}")
     assert deny_action["decision"] == "deny", f"expected deny, got {deny_action}"
 
+    log("Authorize test deny tampered identity VC devicePublicKey case")
+    tampered_identity_vc = json.loads(json.dumps(identity_vc))
+    tampered_identity_vc["credentialSubject"]["devicePublicKey"] = tamper_b64(
+        device_public_key_b64
+    )
+    payload_tampered_identity = build_authorize_payload(
+        tampered_identity_vc,
+        capability_vc,
+        device_private_key,
+        "read",
+        "iot:device:example",
+    )
+    deny_tampered_identity = http_post_json(
+        f"{VERIFIER_BASE_URL}/authorize", payload_tampered_identity
+    )
+    log(f"Deny tampered identity response: {deny_tampered_identity}")
+    assert deny_tampered_identity["decision"] == "deny", (
+        f"expected deny, got {deny_tampered_identity}"
+    )
+
+    log("Authorize test deny mismatched identity/capability subject DID case")
+    other_subject = http_post_json(f"{ISSUER_BASE_URL}/did/create", {})
+    other_identity_vc = http_post_json(
+        f"{ISSUER_BASE_URL}/vc/issue/identity",
+        {
+            "subject_did": other_subject["did"],
+            "device_public_key": device_public_key_b64,
+        },
+    )
+    payload_mismatch = build_authorize_payload(
+        other_identity_vc,
+        capability_vc,
+        device_private_key,
+        "read",
+        "iot:device:example",
+    )
+    deny_mismatch = http_post_json(f"{VERIFIER_BASE_URL}/authorize", payload_mismatch)
+    log(f"Deny subject mismatch response: {deny_mismatch}")
+    assert deny_mismatch["decision"] == "deny", f"expected deny, got {deny_mismatch}"
+
     log("Authorize test deny bad signature case")
-    payload_bad_signature = dict(payload)
-    payload_bad_signature["device_signature"] = tamper_b64(device_signature_b64)
+    payload_bad_signature = build_authorize_payload(
+        identity_vc,
+        capability_vc,
+        device_private_key,
+        "read",
+        "iot:device:example",
+    )
+    payload_bad_signature["device_signature"] = tamper_b64(
+        payload_bad_signature["device_signature"]
+    )
     deny_signature = http_post_json(
         f"{VERIFIER_BASE_URL}/authorize", payload_bad_signature
     )
@@ -123,6 +177,25 @@ def http_post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def b64encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii")
+
+
+def build_authorize_payload(
+    identity_vc: Dict[str, Any],
+    capability_vc: Dict[str, Any],
+    device_private_key: ed25519.Ed25519PrivateKey,
+    requested_action: str,
+    requested_resource: str,
+) -> Dict[str, Any]:
+    nonce = f"nonce_{uuid.uuid4()}"
+    device_signature = device_private_key.sign(nonce.encode("utf-8"))
+    return {
+        "identity_vc": identity_vc,
+        "capability_vc": capability_vc,
+        "nonce": nonce,
+        "device_signature": b64encode(device_signature),
+        "requested_action": requested_action,
+        "requested_resource": requested_resource,
+    }
 
 
 def tamper_b64(value: str) -> str:

@@ -114,18 +114,29 @@ def main() -> None:
     pause()
 
     print_section("Phase 1: Device Onboarding")
+    print_step(step, "Generate a local Ed25519 keypair for the device.")
+    step += 1
+    log("The private key never leaves the device.")
+    device_private_key = ed25519.Ed25519PrivateKey.generate()
+    device_public_key = device_private_key.public_key()
+    device_public_key_b64 = b64encode(
+        device_public_key.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+    )
+    log(f"Public key fingerprint: {device_public_key_b64[:12]}")
+    pause()
+
     print_step(step, "Create a new DID for the device.")
     step += 1
     log("→ POST /did/create (issuer)")
     subject = http_post_json(f"{ISSUER_BASE_URL}/did/create", {})
     subject_did = subject.get("did", "unknown")
-    public_key = subject.get("public_key", "")
-    public_key_prefix = public_key[:12] if public_key else "n/a"
     print_summary_block(
         "DID created:",
         [
             ("DID", subject_did),
-            ("Public key prefix", public_key_prefix),
         ],
     )
     if SHOW_JSON:
@@ -137,13 +148,14 @@ def main() -> None:
     pause()
 
     print_section("Phase 2: Identity VC Issuance")
-    print_step(step, "Issue an Identity VC for the device DID.")
+    print_step(step, "Issue an Identity VC binding the DID to the device public key.")
     step += 1
     log("→ POST /vc/issue/identity (issuer)")
     identity_vc = http_post_json(
         f"{ISSUER_BASE_URL}/vc/issue/identity",
-        {"subject_did": subject_did},
+        {"subject_did": subject_did, "device_public_key": device_public_key_b64},
     )
+    identity_subject = identity_vc.get("credentialSubject", {})
     identity_issuance = identity_vc.get("issuanceDate", "unknown")
     identity_expiration = identity_vc.get("expirationDate", "unknown")
     print_summary_block(
@@ -151,7 +163,8 @@ def main() -> None:
         [
             ("VC ID", identity_vc.get("id", "unknown")),
             ("Issuer DID", identity_vc.get("issuer", "unknown")),
-            ("Subject DID", subject_did),
+            ("Subject DID", identity_subject.get("id", "unknown")),
+            ("Bound public key prefix", identity_subject.get("devicePublicKey", "")[:12]),
             ("Issuance date", identity_issuance),
             ("Expiration date", identity_expiration),
         ],
@@ -176,14 +189,15 @@ def main() -> None:
             "resource": "iot:device:example",
         },
     )
+    capability_subject = capability_vc.get("credentialSubject", {})
     capability_issuance = capability_vc.get("issuanceDate", "unknown")
     capability_expiration = capability_vc.get("expirationDate", "unknown")
     print_summary_block(
         "Capability VC issued:",
         [
             ("VC ID", capability_vc.get("id", "unknown")),
-            ("Action", capability_vc.get("action", "read")),
-            ("Resource", capability_vc.get("resource", "iot:device:example")),
+            ("Action", capability_subject.get("action", "read")),
+            ("Resource", capability_subject.get("resource", "iot:device:example")),
             ("Issuance date", capability_issuance),
             ("Expiration date", capability_expiration),
         ],
@@ -197,19 +211,10 @@ def main() -> None:
     pause()
 
     print_section("Phase 4: Proof of Possession Setup")
-    print_step(step, "Generate a local Ed25519 keypair for the device.")
+    print_step(step, "Device signs a nonce for proof of possession.")
     step += 1
-    log("The private key never leaves the device.")
-    device_private_key = ed25519.Ed25519PrivateKey.generate()
-    device_public_key = device_private_key.public_key()
-    device_public_key_b64 = b64encode(
-        device_public_key.public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
-        )
-    )
-    log(f"Public key fingerprint: {device_public_key_b64[:12]}")
     log("A nonce is a one-time challenge used to prevent replay attacks.")
+    log("The verifier checks the signature against devicePublicKey inside the signed Identity VC.")
     pause()
 
     print_section("Phase 5: Authorization Decision Demo")
@@ -221,17 +226,18 @@ def main() -> None:
     log("    Resource: iot:device:example")
     log()
     log("  Capability credential allows:")
-    log(f"    Action: {capability_vc.get('action', 'read')}")
-    log(f"    Resource: {capability_vc.get('resource', 'iot:device:example')}")
+    log(f"    Action: {capability_subject.get('action', 'read')}")
+    log(f"    Resource: {capability_subject.get('resource', 'iot:device:example')}")
     log()
+    log("  Verifier checks Identity VC plus Capability VC before allowing.")
     log("→ POST /authorize (verifier)")
     nonce = f"nonce_{uuid.uuid4()}"
     device_signature_b64 = sign_nonce(device_private_key, nonce)
     allow_payload: Dict[str, Any] = {
+        "identity_vc": identity_vc,
         "capability_vc": capability_vc,
         "nonce": nonce,
         "device_signature": device_signature_b64,
-        "device_public_key": device_public_key_b64,
         "requested_action": "read",
         "requested_resource": "iot:device:example",
     }
@@ -260,8 +266,8 @@ def main() -> None:
     log("    Resource: iot:device:example")
     log()
     log("  Capability credential allows:")
-    log(f"    Action: {capability_vc.get('action', 'read')}")
-    log(f"    Resource: {capability_vc.get('resource', 'iot:device:example')}")
+    log(f"    Action: {capability_subject.get('action', 'read')}")
+    log(f"    Resource: {capability_subject.get('resource', 'iot:device:example')}")
     log()
     log("→ POST /authorize (verifier)")
     nonce = f"nonce_{uuid.uuid4()}"
@@ -301,8 +307,8 @@ def main() -> None:
     log("    Resource: iot:device:example")
     log()
     log("  Capability credential allows:")
-    log(f"    Action: {capability_vc.get('action', 'read')}")
-    log(f"    Resource: {capability_vc.get('resource', 'iot:device:example')}")
+    log(f"    Action: {capability_subject.get('action', 'read')}")
+    log(f"    Resource: {capability_subject.get('resource', 'iot:device:example')}")
     log()
     log("→ POST /authorize (verifier)")
     nonce = f"nonce_{uuid.uuid4()}"

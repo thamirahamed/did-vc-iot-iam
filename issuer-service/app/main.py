@@ -19,6 +19,7 @@ else:
 
 class IdentityIssueRequest(BaseModel):
     subject_did: str
+    device_public_key: str
 
 
 class CapabilityIssueRequest(BaseModel):
@@ -44,6 +45,7 @@ def did_create() -> dict:
 def issue_identity_vc_endpoint(payload: IdentityIssueRequest) -> dict:
     return issue_identity_vc(
         subject_did=payload.subject_did,
+        device_public_key=payload.device_public_key,
         issuer_did=ISSUER_DID,
         issuer_private_key=ISSUER_PRIVATE_KEY,
     )

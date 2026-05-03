@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 
 def issue_identity_vc(
     subject_did: str,
+    device_public_key: str,
     issuer_did: str,
     issuer_private_key: ed25519.Ed25519PrivateKey,
 ) -> dict:
@@ -18,7 +19,10 @@ def issue_identity_vc(
         "issuer": issuer_did,
         "issuanceDate": now.isoformat(timespec="seconds") + "Z",
         "expirationDate": (now + timedelta(days=365)).isoformat(timespec="seconds") + "Z",
-        "credentialSubject": {"id": subject_did},
+        "credentialSubject": {
+            "id": subject_did,
+            "devicePublicKey": device_public_key,
+        },
     }
 
     signing_input = json.dumps(vc, sort_keys=True, separators=(",", ":")).encode("utf-8")
