@@ -8,6 +8,14 @@ services:
     environment:
       DID_REGISTRY_PATH: /app/data/did_registry.json
       REVOCATION_REGISTRY_PATH: /app/data/revocation_registry.json
+      FABRIC_ENABLED: ${FABRIC_ENABLED:-false}
+      FABRIC_CLI_MODE: ${FABRIC_CLI_MODE:-true}
+      FABRIC_PEER_MODE: ${FABRIC_PEER_MODE:-local}
+      FABRIC_PEER_DOCKER_IMAGE: ${FABRIC_PEER_DOCKER_IMAGE:-hyperledger/fabric-tools:2.5.15}
+      FABRIC_DOCKER_NETWORK: ${FABRIC_DOCKER_NETWORK:-fabric_test}
+      FABRIC_CHANNEL_NAME: ${FABRIC_CHANNEL_NAME:-mychannel}
+      FABRIC_CHAINCODE_NAME: ${FABRIC_CHAINCODE_NAME:-iam}
+      FABRIC_FAIL_CLOSED: ${FABRIC_FAIL_CLOSED:-true}
     volumes:
       - ./data:/app/data
   verifier:
@@ -20,5 +28,13 @@ services:
       ISSUER_URL: http://issuer:8000
       REVOCATION_FAIL_CLOSED: "true"
       DID_RESOLUTION_FAIL_CLOSED: "true"
+      FABRIC_ENABLED: ${FABRIC_ENABLED:-false}
+      FABRIC_CLI_MODE: ${FABRIC_CLI_MODE:-true}
+      FABRIC_PEER_MODE: ${FABRIC_PEER_MODE:-local}
+      FABRIC_PEER_DOCKER_IMAGE: ${FABRIC_PEER_DOCKER_IMAGE:-hyperledger/fabric-tools:2.5.15}
+      FABRIC_DOCKER_NETWORK: ${FABRIC_DOCKER_NETWORK:-fabric_test}
+      FABRIC_CHANNEL_NAME: ${FABRIC_CHANNEL_NAME:-mychannel}
+      FABRIC_CHAINCODE_NAME: ${FABRIC_CHAINCODE_NAME:-iam}
+      FABRIC_FAIL_CLOSED: ${FABRIC_FAIL_CLOSED:-true}
     depends_on:
       - issuer

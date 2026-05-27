@@ -1,9 +1,12 @@
+import hashlib
+import json
 import os
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from . import fabric_client
 from .did import create_did, generate_keypair, load_private_key_b64
 from .did_registry import list_dids, register_did, resolve_did
 from .revocation import get_revocation_record, list_revoked, revoke_credential
@@ -49,11 +52,20 @@ def health() -> dict:
 def did_create(payload: DidCreateRequest) -> dict:
     did = create_did()
     did_document = register_did(did, payload.device_public_key)
-    return {
+    response = {
         "did": did,
         "public_key": payload.device_public_key,
         "did_document": did_document,
     }
+    fabric_result = fabric_client.register_did(
+        did,
+        payload.device_public_key,
+        _stable_hash(did_document),
+        did_document.get("created", ""),
+    )
+    _handle_fabric_result(fabric_result)
+    _append_fabric_warning(response, fabric_result)
+    return response
 
 
 @app.get("/did/resolve")
@@ -82,28 +94,44 @@ def issue_identity_vc_endpoint(payload: IdentityIssueRequest) -> dict:
             detail="device public key does not match DID document",
         )
 
-    return issue_identity_vc(
+    vc = issue_identity_vc(
         subject_did=payload.subject_did,
         device_public_key=payload.device_public_key,
         issuer_did=ISSUER_DID,
         issuer_private_key=ISSUER_PRIVATE_KEY,
     )
+    fabric_result = fabric_client.register_credential_status(vc)
+    _handle_fabric_result(fabric_result)
+    _append_fabric_warning(vc, fabric_result)
+    return vc
 
 
 @app.post("/vc/issue/capability")
 def issue_capability_vc_endpoint(payload: CapabilityIssueRequest) -> dict:
-    return issue_capability_vc(
+    vc = issue_capability_vc(
         subject_did=payload.subject_did,
         action=payload.action,
         resource=payload.resource,
         issuer_did=ISSUER_DID,
         issuer_private_key=ISSUER_PRIVATE_KEY,
     )
+    fabric_result = fabric_client.register_credential_status(vc)
+    _handle_fabric_result(fabric_result)
+    _append_fabric_warning(vc, fabric_result)
+    return vc
 
 
 @app.post("/vc/revoke")
 def revoke_vc_endpoint(payload: RevokeCredentialRequest) -> dict:
-    return revoke_credential(payload.credential_id, payload.reason)
+    record = revoke_credential(payload.credential_id, payload.reason)
+    fabric_result = fabric_client.revoke_credential_on_ledger(
+        payload.credential_id,
+        payload.reason,
+        record.get("revoked_at", ""),
+    )
+    _handle_fabric_result(fabric_result)
+    _append_fabric_warning(record, fabric_result)
+    return record
 
 
 @app.get("/vc/status")
@@ -121,3 +149,24 @@ def _extract_did_document_key(did_document: dict) -> Optional[str]:
     if not verification_methods:
         return None
     return verification_methods[0].get("publicKeyBase64Url")
+
+
+def _stable_hash(value: dict) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _handle_fabric_result(result: dict) -> None:
+    if not result.get("enabled"):
+        return
+    if result.get("ok"):
+        return
+    if fabric_client.fabric_fail_closed():
+        error = result.get("error") or "Fabric operation failed"
+        raise HTTPException(status_code=503, detail=error)
+
+
+def _append_fabric_warning(response: dict, result: dict) -> None:
+    if not result.get("enabled") or result.get("ok", True):
+        return
+    response["fabric_warning"] = result.get("error") or "Fabric operation failed"

@@ -7,6 +7,7 @@ from typing import Any, Dict, Tuple
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from .did_resolver import resolve_did
+from . import fabric_client
 from .models import AuthorizeRequest, AuthorizeResponse
 from .revocation_client import check_revoked
 
@@ -62,6 +63,10 @@ def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
             reason="identity VC key does not match DID document",
         )
 
+    ok, reason = _check_fabric_did(identity_subject["id"])
+    if not ok:
+        return AuthorizeResponse(decision="deny", reason=reason)
+
     ok, reason = _verify_device_signature(
         payload.nonce,
         payload.device_signature,
@@ -70,11 +75,11 @@ def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
     if not ok:
         return AuthorizeResponse(decision="deny", reason=reason)
 
-    ok, reason = _check_revocation(identity_vc, "identity")
+    ok, reason = _check_credential_status(identity_vc, "identity")
     if not ok:
         return AuthorizeResponse(decision="deny", reason=reason)
 
-    ok, reason = _check_revocation(capability_vc, "capability")
+    ok, reason = _check_credential_status(capability_vc, "capability")
     if not ok:
         return AuthorizeResponse(decision="deny", reason=reason)
 
@@ -167,6 +172,36 @@ def _check_revocation(vc: Dict[str, Any], label: str) -> Tuple[bool, str]:
     if revoked:
         return False, f"{label} credential revoked"
 
+    return True, ""
+
+
+def _check_credential_status(vc: Dict[str, Any], label: str) -> Tuple[bool, str]:
+    if not fabric_client.fabric_enabled():
+        return _check_revocation(vc, label)
+
+    result = fabric_client.get_credential_status(vc.get("id", ""))
+    if not result.get("ok"):
+        if fabric_client.fabric_fail_closed():
+            return False, "ledger status unavailable"
+        return True, ""
+
+    status = result.get("result")
+    if isinstance(status, dict) and status.get("revoked") is True:
+        return False, f"{label} credential revoked"
+
+    return True, ""
+
+
+def _check_fabric_did(did: str) -> Tuple[bool, str]:
+    if not fabric_client.fabric_enabled():
+        return True, ""
+
+    result = fabric_client.get_did(did)
+    if result.get("ok"):
+        return True, ""
+
+    if fabric_client.fabric_fail_closed():
+        return False, "ledger status unavailable"
     return True, ""
 
 
