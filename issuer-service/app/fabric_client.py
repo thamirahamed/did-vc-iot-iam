@@ -35,6 +35,15 @@ def revoke_credential_on_ledger(
     return _invoke("RevokeCredential", [credential_id, reason or "", revoked_at])
 
 
+def write_audit_event(event: dict) -> dict:
+    event_json = json.dumps(event, sort_keys=True, separators=(",", ":"))
+    return _invoke("AddAuditEvent", [event_json], timeout_seconds=_audit_write_timeout())
+
+
+def list_audit_events(limit: int = 50) -> dict:
+    return _query_json("ListAuditEvents", [str(limit)])
+
+
 def get_credential_status(credential_id: str) -> dict:
     return _query_json("GetCredentialStatus", [credential_id])
 
@@ -62,7 +71,7 @@ def _credential_type(vc: Dict[str, Any]) -> str:
     return ""
 
 
-def _invoke(function: str, args: List[str]) -> dict:
+def _invoke(function: str, args: List[str], timeout_seconds: float | None = None) -> dict:
     if not fabric_enabled():
         return {"enabled": False, "skipped": True}
 
@@ -87,7 +96,7 @@ def _invoke(function: str, args: List[str]) -> dict:
     command.extend(_peer_connection_args())
     command.append("--waitForEvent")
 
-    return _run(command)
+    return _run(command, timeout_seconds=timeout_seconds)
 
 
 def _query_json(function: str, args: List[str]) -> dict:
@@ -145,14 +154,15 @@ def _validate_env(write: bool) -> dict:
     return {}
 
 
-def _run(command: List[str]) -> dict:
+def _run(command: List[str], timeout_seconds: float | None = None) -> dict:
     if _peer_mode() == "docker":
-        return _run_docker(command)
-    return _run_local(command)
+        return _run_docker(command, timeout_seconds=timeout_seconds)
+    return _run_local(command, timeout_seconds=timeout_seconds)
 
 
-def _run_local(command: List[str]) -> dict:
+def _run_local(command: List[str], timeout_seconds: float | None = None) -> dict:
     env = _peer_env(os.environ.copy())
+    timeout = timeout_seconds or _fabric_cli_timeout()
 
     try:
         completed = subprocess.run(
@@ -161,8 +171,15 @@ def _run_local(command: List[str]) -> dict:
             check=False,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired:
+        return {
+            "enabled": True,
+            "ok": False,
+            "error": f"Fabric peer CLI timed out after {timeout} seconds",
+            "timeout": True,
+        }
     except Exception as exc:
         return {"enabled": True, "ok": False, "error": str(exc)}
 
@@ -176,7 +193,8 @@ def _run_local(command: List[str]) -> dict:
     }
 
 
-def _run_docker(command: List[str]) -> dict:
+def _run_docker(command: List[str], timeout_seconds: float | None = None) -> dict:
+    timeout = timeout_seconds or _fabric_cli_timeout()
     container_crypto_path = os.getenv(
         "FABRIC_CRYPTO_CONFIG_CONTAINER_PATH",
         "/etc/hyperledger/fabric/crypto",
@@ -209,8 +227,16 @@ def _run_docker(command: List[str]) -> dict:
             check=False,
             capture_output=True,
             text=True,
-            timeout=45,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired:
+        return {
+            "enabled": True,
+            "ok": False,
+            "error": f"Fabric peer CLI timed out after {timeout} seconds",
+            "timeout": True,
+            "peer_mode": "docker",
+        }
     except Exception as exc:
         return {"enabled": True, "ok": False, "error": str(exc)}
 
@@ -307,3 +333,19 @@ def _peer_connection_args() -> List[str]:
 
 def _csv_env(name: str, default: str) -> List[str]:
     return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
+
+
+def _fabric_cli_timeout() -> float:
+    return _float_env("FABRIC_CLI_TIMEOUT_SECONDS", 20.0)
+
+
+def _audit_write_timeout() -> float:
+    return _float_env("AUDIT_WRITE_TIMEOUT_SECONDS", 5.0)
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default

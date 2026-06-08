@@ -3,9 +3,10 @@ import json
 import os
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
+from . import audit
 from . import fabric_client
 from .did import create_did, generate_keypair, load_private_key_b64
 from .did_registry import list_dids, register_did, resolve_did
@@ -65,6 +66,12 @@ def did_create(payload: DidCreateRequest) -> dict:
     )
     _handle_fabric_result(fabric_result)
     _append_fabric_warning(response, fabric_result)
+    _record_audit_event(
+        response,
+        event_type="DID_REGISTERED",
+        subject_did=did,
+        metadata={"public_key_prefix": payload.device_public_key[:16]},
+    )
     return response
 
 
@@ -103,6 +110,12 @@ def issue_identity_vc_endpoint(payload: IdentityIssueRequest) -> dict:
     fabric_result = fabric_client.register_credential_status(vc)
     _handle_fabric_result(fabric_result)
     _append_fabric_warning(vc, fabric_result)
+    _record_audit_event(
+        vc,
+        event_type="IDENTITY_VC_ISSUED",
+        subject_did=vc.get("credentialSubject", {}).get("id", ""),
+        credential_id=vc.get("id", ""),
+    )
     return vc
 
 
@@ -118,6 +131,17 @@ def issue_capability_vc_endpoint(payload: CapabilityIssueRequest) -> dict:
     fabric_result = fabric_client.register_credential_status(vc)
     _handle_fabric_result(fabric_result)
     _append_fabric_warning(vc, fabric_result)
+    subject = vc.get("credentialSubject", {})
+    _record_audit_event(
+        vc,
+        event_type="CAPABILITY_VC_ISSUED",
+        subject_did=subject.get("id", ""),
+        credential_id=vc.get("id", ""),
+        metadata={
+            "action": subject.get("action", ""),
+            "resource": subject.get("resource", ""),
+        },
+    )
     return vc
 
 
@@ -131,6 +155,12 @@ def revoke_vc_endpoint(payload: RevokeCredentialRequest) -> dict:
     )
     _handle_fabric_result(fabric_result)
     _append_fabric_warning(record, fabric_result)
+    _record_audit_event(
+        record,
+        event_type="VC_REVOKED",
+        credential_id=payload.credential_id,
+        reason=payload.reason or "",
+    )
     return record
 
 
@@ -142,6 +172,22 @@ def vc_status(credential_id: str) -> dict:
 @app.get("/vc/revoked")
 def revoked_vcs() -> dict:
     return {"revoked": list_revoked()}
+
+
+@app.get("/audit/events")
+def audit_events(limit: int = Query(50, ge=1)) -> dict:
+    if fabric_client.fabric_enabled():
+        result = fabric_client.list_audit_events(limit)
+        if result.get("ok"):
+            events = result.get("result", [])
+            if isinstance(events, list):
+                return {"events": events}
+        if audit_fail_closed():
+            raise HTTPException(
+                status_code=503,
+                detail=result.get("error") or "audit ledger read failed",
+            )
+    return {"events": audit.list_audit_events(limit)}
 
 
 def _extract_did_document_key(did_document: dict) -> Optional[str]:
@@ -170,3 +216,48 @@ def _append_fabric_warning(response: dict, result: dict) -> None:
     if not result.get("enabled") or result.get("ok", True):
         return
     response["fabric_warning"] = result.get("error") or "Fabric operation failed"
+
+
+def _record_audit_event(
+    response: dict,
+    event_type: str,
+    subject_did: str = "",
+    credential_id: str = "",
+    decision: str = "",
+    reason: str = "",
+    metadata: Optional[dict] = None,
+) -> None:
+    try:
+        event = audit.write_audit_event(
+            event_type=event_type,
+            subject_did=subject_did,
+            credential_id=credential_id,
+            decision=decision,
+            reason=reason,
+            metadata=metadata,
+        )
+    except Exception as exc:
+        if audit_fail_closed():
+            raise HTTPException(status_code=503, detail="audit logging failed") from exc
+        print(f"audit logging warning: {exc}", flush=True)
+        _append_audit_warning(response, f"local audit logging failed: {exc}")
+        return
+
+    result = fabric_client.write_audit_event(event)
+    if result.get("enabled") and not result.get("ok"):
+        if audit_fail_closed():
+            error = result.get("error") or "audit ledger write failed"
+            raise HTTPException(status_code=503, detail=error)
+        warning = result.get("error") or "audit ledger write failed"
+        print(f"audit logging warning: {warning}", flush=True)
+        _append_audit_warning(response, warning)
+
+
+def audit_fail_closed() -> bool:
+    return os.getenv("AUDIT_FAIL_CLOSED", "false").strip().lower() == "true"
+
+
+def _append_audit_warning(response: dict, warning: str) -> None:
+    if "proof" in response:
+        return
+    response["audit_warning"] = warning

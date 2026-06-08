@@ -433,8 +433,48 @@ def main() -> None:
         log()
     pause()
 
+    print_section("Phase 7: Audit Trail")
+    print_step(step, "Review issuer and verifier audit events.")
+    step += 1
+    log("-> GET /audit/events (issuer)")
+    issuer_audit = http_get_json(f"{ISSUER_BASE_URL}/audit/events?limit=10")
+    print_audit_events("Issuer audit events:", issuer_audit.get("events", []))
+    log()
+    log("-> GET /audit/events (verifier)")
+    verifier_audit = http_get_json(f"{VERIFIER_BASE_URL}/audit/events?limit=10")
+    print_audit_events("Verifier audit events:", verifier_audit.get("events", []))
+    log()
+    log("Local mode stores audit records as JSONL files under data/audit.")
+    log("Fabric mode stores audit event metadata in IAM chaincode ledger records.")
+    log("Audit records store metadata only, not full VCs, private keys, or sensor data.")
+    if SHOW_JSON:
+        log()
+        log("--- Full API response ---")
+        log(json.dumps({"issuer": issuer_audit, "verifier": verifier_audit}, indent=2))
+        log("-------------------------")
+        log()
+    pause()
+
     log()
     log("Demo complete")
+
+
+def print_audit_events(title: str, events: list[dict]) -> None:
+    log(title)
+    if not events:
+        log("  - No audit events found")
+        return
+    for event in events[:10]:
+        summary = [
+            ("Type", event.get("event_type", "unknown")),
+            ("Service", event.get("service", "unknown")),
+            ("Decision", event.get("decision", "")),
+            ("Reason", event.get("reason", "")),
+            ("Subject", event.get("subject_did", "")),
+            ("Credential", event.get("credential_id", "")),
+        ]
+        compact = ", ".join(f"{key}: {value}" for key, value in summary if value)
+        log(f"  - {compact}")
 
 
 if __name__ == "__main__":

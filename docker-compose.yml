@@ -8,8 +8,12 @@ services:
     environment:
       DID_REGISTRY_PATH: /app/data/did_registry.json
       REVOCATION_REGISTRY_PATH: /app/data/revocation_registry.json
+      AUDIT_LOG_PATH: /app/data/audit/issuer_audit.jsonl
+      AUDIT_FAIL_CLOSED: ${AUDIT_FAIL_CLOSED:-false}
+      AUDIT_WRITE_TIMEOUT_SECONDS: ${AUDIT_WRITE_TIMEOUT_SECONDS:-5}
       FABRIC_ENABLED: ${FABRIC_ENABLED:-false}
       FABRIC_CLI_MODE: ${FABRIC_CLI_MODE:-true}
+      FABRIC_CLI_TIMEOUT_SECONDS: ${FABRIC_CLI_TIMEOUT_SECONDS:-20}
       FABRIC_PEER_MODE: ${FABRIC_PEER_MODE:-local}
       FABRIC_PEER_DOCKER_IMAGE: ${FABRIC_PEER_DOCKER_IMAGE:-hyperledger/fabric-tools:2.5.15}
       FABRIC_DOCKER_NETWORK: ${FABRIC_DOCKER_NETWORK:-fabric_test}
@@ -28,8 +32,12 @@ services:
       ISSUER_URL: http://issuer:8000
       REVOCATION_FAIL_CLOSED: "true"
       DID_RESOLUTION_FAIL_CLOSED: "true"
+      AUDIT_LOG_PATH: /app/data/audit/verifier_audit.jsonl
+      AUDIT_FAIL_CLOSED: ${AUDIT_FAIL_CLOSED:-false}
+      AUDIT_WRITE_TIMEOUT_SECONDS: ${AUDIT_WRITE_TIMEOUT_SECONDS:-5}
       FABRIC_ENABLED: ${FABRIC_ENABLED:-false}
       FABRIC_CLI_MODE: ${FABRIC_CLI_MODE:-true}
+      FABRIC_CLI_TIMEOUT_SECONDS: ${FABRIC_CLI_TIMEOUT_SECONDS:-20}
       FABRIC_PEER_MODE: ${FABRIC_PEER_MODE:-local}
       FABRIC_PEER_DOCKER_IMAGE: ${FABRIC_PEER_DOCKER_IMAGE:-hyperledger/fabric-tools:2.5.15}
       FABRIC_DOCKER_NETWORK: ${FABRIC_DOCKER_NETWORK:-fabric_test}
@@ -38,3 +46,5 @@ services:
       FABRIC_FAIL_CLOSED: ${FABRIC_FAIL_CLOSED:-true}
     depends_on:
       - issuer
+    volumes:
+      - ./data:/app/data

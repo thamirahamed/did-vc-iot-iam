@@ -6,6 +6,7 @@ from typing import Any, Dict, Tuple
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+from . import audit
 from .did_resolver import resolve_did
 from . import fabric_client
 from .models import AuthorizeRequest, AuthorizeResponse
@@ -15,57 +16,55 @@ from .revocation_client import check_revoked
 def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
     issuer_key_b64 = os.getenv("ISSUER_PUBLIC_KEY_B64", "").strip()
     if not issuer_key_b64:
-        return AuthorizeResponse(
-            decision="deny",
-            reason="issuer public key not configured",
-        )
+        return _audit_authorization_response(payload, "deny", "issuer public key not configured")
 
     identity_vc = payload.identity_vc
     capability_vc = payload.capability_vc
 
     ok, reason = _validate_identity_vc(identity_vc)
     if not ok:
-        return AuthorizeResponse(decision="deny", reason=reason)
+        return _audit_authorization_response(payload, "deny", reason)
 
     ok, reason = _verify_issuer_signature(identity_vc, issuer_key_b64)
     if not ok:
-        return AuthorizeResponse(decision="deny", reason=reason)
+        return _audit_authorization_response(payload, "deny", reason)
 
     ok, reason = _validate_capability_vc(capability_vc)
     if not ok:
-        return AuthorizeResponse(decision="deny", reason=reason)
+        return _audit_authorization_response(payload, "deny", reason)
 
     ok, reason = _verify_issuer_signature(capability_vc, issuer_key_b64)
     if not ok:
-        return AuthorizeResponse(decision="deny", reason=reason)
+        return _audit_authorization_response(payload, "deny", reason)
 
     for vc in (identity_vc, capability_vc):
         ok, reason = _check_expiration(vc)
         if not ok:
-            return AuthorizeResponse(decision="deny", reason=reason)
+            return _audit_authorization_response(payload, "deny", reason)
 
     identity_subject = identity_vc["credentialSubject"]
     capability_subject = capability_vc["credentialSubject"]
     if identity_subject.get("id") != capability_subject.get("id"):
-        return AuthorizeResponse(decision="deny", reason="subject DID mismatch")
+        return _audit_authorization_response(payload, "deny", "subject DID mismatch")
 
     did_document, reason = resolve_did(identity_subject["id"])
     if not did_document:
-        return AuthorizeResponse(decision="deny", reason=reason)
+        return _audit_authorization_response(payload, "deny", reason)
 
     did_document_key = _extract_did_document_key(did_document)
     if not did_document_key:
-        return AuthorizeResponse(decision="deny", reason="device DID not registered")
+        return _audit_authorization_response(payload, "deny", "device DID not registered")
 
     if identity_subject.get("devicePublicKey") != did_document_key:
-        return AuthorizeResponse(
-            decision="deny",
-            reason="identity VC key does not match DID document",
+        return _audit_authorization_response(
+            payload,
+            "deny",
+            "identity VC key does not match DID document",
         )
 
     ok, reason = _check_fabric_did(identity_subject["id"])
     if not ok:
-        return AuthorizeResponse(decision="deny", reason=reason)
+        return _audit_authorization_response(payload, "deny", reason)
 
     ok, reason = _verify_device_signature(
         payload.nonce,
@@ -73,15 +72,15 @@ def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
         did_document_key,
     )
     if not ok:
-        return AuthorizeResponse(decision="deny", reason=reason)
+        return _audit_authorization_response(payload, "deny", reason)
 
     ok, reason = _check_credential_status(identity_vc, "identity")
     if not ok:
-        return AuthorizeResponse(decision="deny", reason=reason)
+        return _audit_authorization_response(payload, "deny", reason)
 
     ok, reason = _check_credential_status(capability_vc, "capability")
     if not ok:
-        return AuthorizeResponse(decision="deny", reason=reason)
+        return _audit_authorization_response(payload, "deny", reason)
 
     ok, reason = _enforce_capability(
         capability_vc,
@@ -89,9 +88,9 @@ def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
         payload.requested_resource,
     )
     if not ok:
-        return AuthorizeResponse(decision="deny", reason=reason)
+        return _audit_authorization_response(payload, "deny", reason)
 
-    return AuthorizeResponse(decision="allow", reason="authorized")
+    return _audit_authorization_response(payload, "allow", "authorized")
 
 
 def _validate_identity_vc(vc: Dict[str, Any]) -> Tuple[bool, str]:
@@ -295,6 +294,49 @@ def _enforce_capability(
         return False, "resource not permitted"
 
     return True, ""
+
+
+def _audit_authorization_response(
+    payload: AuthorizeRequest, decision: str, reason: str
+) -> AuthorizeResponse:
+    try:
+        event = audit.write_audit_event(
+            event_type="AUTH_ALLOW" if decision == "allow" else "AUTH_DENY",
+            subject_did=_best_subject_did(payload),
+            credential_id=_best_capability_credential_id(payload),
+            decision=decision,
+            reason=reason,
+            metadata={
+                "requested_action": payload.requested_action,
+                "requested_resource": payload.requested_resource,
+            },
+        )
+        result = fabric_client.write_audit_event(event)
+        if result.get("enabled") and not result.get("ok"):
+            raise RuntimeError(result.get("error") or "audit ledger write failed")
+    except Exception as exc:
+        if audit_fail_closed():
+            return AuthorizeResponse(decision="deny", reason="audit logging failed")
+        print(f"audit logging warning: {exc}", flush=True)
+
+    return AuthorizeResponse(decision=decision, reason=reason)
+
+
+def _best_subject_did(payload: AuthorizeRequest) -> str:
+    for vc in (payload.identity_vc, payload.capability_vc):
+        subject = vc.get("credentialSubject", {})
+        if isinstance(subject, dict) and subject.get("id"):
+            return str(subject.get("id"))
+    return ""
+
+
+def _best_capability_credential_id(payload: AuthorizeRequest) -> str:
+    credential_id = payload.capability_vc.get("id", "")
+    return str(credential_id) if credential_id else ""
+
+
+def audit_fail_closed() -> bool:
+    return os.getenv("AUDIT_FAIL_CLOSED", "false").strip().lower() == "true"
 
 
 def _b64decode(value: str) -> bytes:

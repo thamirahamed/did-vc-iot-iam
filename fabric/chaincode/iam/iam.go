@@ -34,6 +34,19 @@ type CredentialStatus struct {
 	RevocationReason string `json:"revocation_reason"`
 }
 
+type AuditEvent struct {
+	DocType      string                 `json:"docType"`
+	EventID      string                 `json:"event_id"`
+	EventType    string                 `json:"event_type"`
+	SubjectDID   string                 `json:"subject_did"`
+	CredentialID string                 `json:"credential_id"`
+	Decision     string                 `json:"decision"`
+	Reason       string                 `json:"reason"`
+	CreatedAt    string                 `json:"created_at"`
+	Service      string                 `json:"service"`
+	Metadata     map[string]interface{} `json:"metadata"`
+}
+
 func (s *SmartContract) Ping(ctx contractapi.TransactionContextInterface) string {
 	return "pong"
 }
@@ -183,12 +196,103 @@ func (s *SmartContract) ListByPrefix(ctx contractapi.TransactionContextInterface
 	return records, nil
 }
 
+func (s *SmartContract) AddAuditEvent(ctx contractapi.TransactionContextInterface, eventJson string) error {
+	var event AuditEvent
+	if err := json.Unmarshal([]byte(eventJson), &event); err != nil {
+		return fmt.Errorf("failed to unmarshal audit event: %w", err)
+	}
+	if event.EventID == "" {
+		return fmt.Errorf("event_id is required")
+	}
+	if event.EventType == "" {
+		return fmt.Errorf("event_type is required")
+	}
+	if event.CreatedAt == "" {
+		return fmt.Errorf("created_at is required")
+	}
+	if event.Service == "" {
+		return fmt.Errorf("service is required")
+	}
+
+	event.DocType = "AuditEvent"
+	if event.Metadata == nil {
+		event.Metadata = map[string]interface{}{}
+	}
+
+	key := auditKey(event.CreatedAt, event.EventID)
+	existing, err := ctx.GetStub().GetState(key)
+	if err != nil {
+		return fmt.Errorf("failed to check audit event: %w", err)
+	}
+	if existing != nil {
+		return fmt.Errorf("audit event already exists: %s", key)
+	}
+
+	bytes, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal audit event: %w", err)
+	}
+	return ctx.GetStub().PutState(key, bytes)
+}
+
+func (s *SmartContract) GetAuditEvent(ctx contractapi.TransactionContextInterface, key string) (*AuditEvent, error) {
+	bytes, err := ctx.GetStub().GetState(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read audit event: %w", err)
+	}
+	if bytes == nil {
+		return nil, fmt.Errorf("audit event not found: %s", key)
+	}
+
+	var event AuditEvent
+	if err := json.Unmarshal(bytes, &event); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal audit event: %w", err)
+	}
+	return &event, nil
+}
+
+func (s *SmartContract) ListAuditEvents(ctx contractapi.TransactionContextInterface, limit string) ([]AuditEvent, error) {
+	limitInt, err := strconv.Atoi(limit)
+	if err != nil || limitInt < 1 {
+		return nil, fmt.Errorf("limit must be a positive integer")
+	}
+
+	results, err := ctx.GetStub().GetStateByRange("AUDIT::", "AUDIT::\uffff")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list audit events: %w", err)
+	}
+	defer results.Close()
+
+	all := []AuditEvent{}
+	for results.HasNext() {
+		item, err := results.Next()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read iterator: %w", err)
+		}
+		var event AuditEvent
+		if err := json.Unmarshal(item.Value, &event); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal audit event: %w", err)
+		}
+		all = append(all, event)
+	}
+
+	events := []AuditEvent{}
+	for index := len(all) - 1; index >= 0 && len(events) < limitInt; index-- {
+		events = append(events, all[index])
+	}
+	return events, nil
+}
+
 func didKey(did string) string {
 	return "DID::" + did
 }
 
 func credentialKey(credentialID string) string {
 	return "CRED::" + credentialID
+}
+
+func auditKey(createdAt string, eventID string) string {
+	return "AUDIT::" + createdAt + "::" + eventID
 }
 
 func main() {

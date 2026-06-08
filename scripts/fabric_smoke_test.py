@@ -31,6 +31,7 @@ def main() -> int:
 
     did = f"did:iot:smoke-{uuid.uuid4()}"
     credential_id = f"urn:uuid:smoke-{uuid.uuid4()}"
+    audit_event_id = f"smoke-{uuid.uuid4()}"
     now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     expires = (datetime.utcnow() + timedelta(days=1)).isoformat(timespec="seconds") + "Z"
 
@@ -81,6 +82,25 @@ def main() -> int:
     expect_ok(revoked)
     if revoked["stdout"].strip().lower() != "true":
         raise RuntimeError(f"expected true, got {revoked['stdout']}")
+
+    print("Add audit event")
+    audit_event = {
+        "event_id": audit_event_id,
+        "event_type": "AUTH_ALLOW",
+        "subject_did": did,
+        "credential_id": credential_id,
+        "decision": "allow",
+        "reason": "authorized",
+        "created_at": now,
+        "service": "verifier",
+        "metadata": {"source": "fabric_smoke_test"},
+    }
+    expect_ok(invoke("AddAuditEvent", [json.dumps(audit_event, sort_keys=True)]))
+
+    print("List audit events")
+    audit_events = query_json("ListAuditEvents", ["20"])
+    if not any(event.get("event_id") == audit_event_id for event in audit_events):
+        raise RuntimeError(f"test audit event not found: {audit_events}")
 
     print("Fabric smoke test passed")
     return 0

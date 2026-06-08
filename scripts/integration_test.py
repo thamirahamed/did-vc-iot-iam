@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -13,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 
 ISSUER_BASE_URL = "http://localhost:8000"
 VERIFIER_BASE_URL = "http://localhost:8001"
+HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "30"))
 
 
 def log(msg: str) -> None:
@@ -386,13 +388,31 @@ def main() -> None:
     log(f"Deny bad signature response: {deny_signature}")
     assert deny_signature["decision"] == "deny", f"expected deny, got {deny_signature}"
 
+    log("Checking issuer audit events")
+    issuer_audit = http_get_json(f"{ISSUER_BASE_URL}/audit/events?limit=100")
+    assert_event_types(
+        issuer_audit,
+        {
+            "DID_REGISTERED",
+            "IDENTITY_VC_ISSUED",
+            "CAPABILITY_VC_ISSUED",
+            "VC_REVOKED",
+        },
+    )
+    log("Audit issuer events checked")
+
+    log("Checking verifier audit events")
+    verifier_audit = http_get_json(f"{VERIFIER_BASE_URL}/audit/events?limit=100")
+    assert_event_types(verifier_audit, {"AUTH_ALLOW", "AUTH_DENY"})
+    log("Audit verifier events checked")
+
     log("All integration tests passed")
 
 
 def http_get_json(url: str) -> Dict[str, Any]:
     request = Request(url, method="GET")
     try:
-        with urlopen(request, timeout=10) as response:
+        with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
             body = response.read().decode("utf-8")
     except HTTPError as exc:
         body = exc.read().decode("utf-8")
@@ -409,7 +429,7 @@ def http_post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=10) as response:
+        with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
             body = response.read().decode("utf-8")
     except HTTPError as exc:
         body = exc.read().decode("utf-8")
@@ -426,12 +446,19 @@ def http_post_expect_error(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=10) as response:
+        with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
             body = response.read().decode("utf-8")
             raise RuntimeError(f"expected error response, got {response.status} {body}")
     except HTTPError as exc:
         body = exc.read().decode("utf-8")
     return json.loads(body)
+
+
+def assert_event_types(audit_response: Dict[str, Any], expected: set[str]) -> None:
+    events = audit_response.get("events", [])
+    found = {event.get("event_type") for event in events if isinstance(event, dict)}
+    missing = expected - found
+    assert not missing, f"missing audit events {sorted(missing)}, got {events}"
 
 
 def b64encode(value: bytes) -> str:

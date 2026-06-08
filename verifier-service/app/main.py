@@ -1,7 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
 
+from . import audit
+from . import fabric_client
 from .models import AuthorizeRequest, AuthorizeResponse
-from .verify import authorize_request
+from .verify import audit_fail_closed, authorize_request
 
 app = FastAPI()
 
@@ -14,3 +16,19 @@ def health() -> dict:
 @app.post("/authorize", response_model=AuthorizeResponse)
 def authorize(payload: AuthorizeRequest) -> AuthorizeResponse:
     return authorize_request(payload)
+
+
+@app.get("/audit/events")
+def audit_events(limit: int = Query(50, ge=1)) -> dict:
+    if fabric_client.fabric_enabled():
+        result = fabric_client.list_audit_events(limit)
+        if result.get("ok"):
+            events = result.get("result", [])
+            if isinstance(events, list):
+                return {"events": events}
+        if audit_fail_closed():
+            raise HTTPException(
+                status_code=503,
+                detail=result.get("error") or "audit ledger read failed",
+            )
+    return {"events": audit.list_audit_events(limit)}

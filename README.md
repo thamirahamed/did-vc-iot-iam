@@ -19,6 +19,42 @@ Each issued VC includes `credentialStatus`. Revocation is currently an MVP simpl
 
 This completes local credential lifecycle support for the prototype. Fabric-backed revocation and EVOKE/accumulator-based revocation are not implemented yet; this registry can later be moved to Fabric or replaced with accumulator-based revocation.
 
+## Audit logging
+
+The IAM lifecycle writes audit events for DID registration, Identity VC issuance, Capability VC issuance, VC revocation, authorization allow, and authorization deny. Audit events contain event metadata such as event type, subject DID, credential ID, decision, reason, timestamp, service, and small metadata fields. They do not store full VCs, private keys, or sensor data.
+
+Local mode writes JSONL audit logs:
+
+- Issuer default: `data/audit/issuer_audit.jsonl`
+- Verifier default: `data/audit/verifier_audit.jsonl`
+- Override path: `AUDIT_LOG_PATH`
+
+Fabric mode writes audit event metadata to IAM chaincode with keys in the form `AUDIT::<created_at>::<event_id>`. The chaincode exposes `AddAuditEvent`, `GetAuditEvent`, and `ListAuditEvents`. `ListAuditEvents` returns recent audit events by reversing deterministic ledger key order.
+
+Both issuer and verifier expose:
+
+```text
+GET /audit/events
+GET /audit/events?limit=50
+```
+
+Audit failure handling is controlled by `AUDIT_FAIL_CLOSED`, defaulting to `false`. When false, the main lifecycle operation continues and the service returns a warning where the response shape allows it or logs a console warning. When true, audit write failures fail issuer operations and force verifier authorization to deny with `audit logging failed`.
+
+Test audit logging in local fallback mode:
+
+```powershell
+docker compose up -d --build
+python scripts/integration_test.py
+```
+
+Test audit logging in Fabric Docker mode:
+
+```powershell
+$env:FABRIC_SAMPLES_ORGS_HOST_PATH="C:/Users/kebab/Documents/CodingProjects/fabric-samples/test-network/organizations"
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml up -d --build
+python scripts/integration_test.py
+```
+
 ## DID onboarding and resolution
 
 The device owns its Ed25519 keypair. During onboarding the device sends its public key to the issuer, and the issuer creates a `did:iot:<uuid>` DID document that stores that key as `publicKeyBase64Url`. DID documents are stored in a local persistent JSON registry at `DID_REGISTRY_PATH`, defaulting to `data/did_registry.json`.
