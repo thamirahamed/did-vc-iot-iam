@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
+from . import accumulator
 from . import audit
 from . import fabric_client
 from .did import create_did, generate_keypair, load_private_key_b64
@@ -42,6 +43,10 @@ class CapabilityIssueRequest(BaseModel):
 class RevokeCredentialRequest(BaseModel):
     credential_id: str
     reason: Optional[str] = None
+
+
+class RefreshProofRequest(BaseModel):
+    credential_id: str
 
 
 @app.get("/health")
@@ -90,6 +95,19 @@ def did_list() -> dict:
 
 @app.post("/vc/issue/identity")
 def issue_identity_vc_endpoint(payload: IdentityIssueRequest) -> dict:
+    vc = _issue_identity_vc(payload)
+    _post_issue_identity(vc)
+    return vc
+
+
+@app.post("/vc/issue/identity-with-proof")
+def issue_identity_vc_with_proof_endpoint(payload: IdentityIssueRequest) -> dict:
+    vc = _issue_identity_vc(payload)
+    proof = _post_issue_identity(vc)
+    return {"vc": vc, "accumulator_proof": proof}
+
+
+def _issue_identity_vc(payload: IdentityIssueRequest) -> dict:
     did_document = resolve_did(payload.subject_did)
     if not did_document:
         raise HTTPException(status_code=400, detail="DID not registered")
@@ -107,20 +125,39 @@ def issue_identity_vc_endpoint(payload: IdentityIssueRequest) -> dict:
         issuer_did=ISSUER_DID,
         issuer_private_key=ISSUER_PRIVATE_KEY,
     )
+    return vc
+
+
+def _post_issue_identity(vc: dict) -> Optional[dict]:
     fabric_result = fabric_client.register_credential_status(vc)
     _handle_fabric_result(fabric_result)
     _append_fabric_warning(vc, fabric_result)
+    subject_did = vc.get("credentialSubject", {}).get("id", "")
+    proof = _register_accumulator_credential(vc, "identity", subject_did)
     _record_audit_event(
         vc,
         event_type="IDENTITY_VC_ISSUED",
-        subject_did=vc.get("credentialSubject", {}).get("id", ""),
+        subject_did=subject_did,
         credential_id=vc.get("id", ""),
     )
-    return vc
+    return proof
 
 
 @app.post("/vc/issue/capability")
 def issue_capability_vc_endpoint(payload: CapabilityIssueRequest) -> dict:
+    vc = _issue_capability_vc(payload)
+    _post_issue_capability(vc)
+    return vc
+
+
+@app.post("/vc/issue/capability-with-proof")
+def issue_capability_vc_with_proof_endpoint(payload: CapabilityIssueRequest) -> dict:
+    vc = _issue_capability_vc(payload)
+    proof = _post_issue_capability(vc)
+    return {"vc": vc, "accumulator_proof": proof}
+
+
+def _issue_capability_vc(payload: CapabilityIssueRequest) -> dict:
     vc = issue_capability_vc(
         subject_did=payload.subject_did,
         action=payload.action,
@@ -128,10 +165,15 @@ def issue_capability_vc_endpoint(payload: CapabilityIssueRequest) -> dict:
         issuer_did=ISSUER_DID,
         issuer_private_key=ISSUER_PRIVATE_KEY,
     )
+    return vc
+
+
+def _post_issue_capability(vc: dict) -> Optional[dict]:
     fabric_result = fabric_client.register_credential_status(vc)
     _handle_fabric_result(fabric_result)
     _append_fabric_warning(vc, fabric_result)
     subject = vc.get("credentialSubject", {})
+    proof = _register_accumulator_credential(vc, "capability", subject.get("id", ""))
     _record_audit_event(
         vc,
         event_type="CAPABILITY_VC_ISSUED",
@@ -142,7 +184,7 @@ def issue_capability_vc_endpoint(payload: CapabilityIssueRequest) -> dict:
             "resource": subject.get("resource", ""),
         },
     )
-    return vc
+    return proof
 
 
 @app.post("/vc/revoke")
@@ -155,6 +197,13 @@ def revoke_vc_endpoint(payload: RevokeCredentialRequest) -> dict:
     )
     _handle_fabric_result(fabric_result)
     _append_fabric_warning(record, fabric_result)
+    if accumulator_enabled():
+        try:
+            accumulator_state = accumulator.revoke_credential(payload.credential_id)
+            record["accumulator"] = _accumulator_response(accumulator_state)
+            _put_accumulator_state(accumulator_state)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     _record_audit_event(
         record,
         event_type="VC_REVOKED",
@@ -172,6 +221,27 @@ def vc_status(credential_id: str) -> dict:
 @app.get("/vc/revoked")
 def revoked_vcs() -> dict:
     return {"revoked": list_revoked()}
+
+
+@app.get("/revocation/accumulator/state")
+def accumulator_state() -> dict:
+    return accumulator.get_state()
+
+
+@app.get("/revocation/accumulator/proof")
+def accumulator_proof(credential_id: str) -> dict:
+    try:
+        return accumulator.get_proof(credential_id)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/revocation/accumulator/refresh-proof")
+def accumulator_refresh_proof(payload: RefreshProofRequest) -> dict:
+    try:
+        return accumulator.refresh_proof(payload.credential_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/audit/events")
@@ -218,6 +288,29 @@ def _append_fabric_warning(response: dict, result: dict) -> None:
     response["fabric_warning"] = result.get("error") or "Fabric operation failed"
 
 
+def _register_accumulator_credential(
+    vc: dict, credential_type: str, subject_did: str
+) -> Optional[dict]:
+    if not accumulator_enabled():
+        return None
+    proof = accumulator.register_credential(vc, credential_type, subject_did)
+    _put_accumulator_state(accumulator.get_state())
+    return proof
+
+
+def _put_accumulator_state(state: dict) -> None:
+    result = fabric_client.put_accumulator_state(state)
+    _handle_fabric_result(result)
+
+
+def _accumulator_response(state: dict) -> dict:
+    return {
+        "version": state.get("version"),
+        "root": state.get("root", ""),
+        "algorithm": state.get("algorithm", accumulator.ALGORITHM),
+    }
+
+
 def _record_audit_event(
     response: dict,
     event_type: str,
@@ -255,6 +348,17 @@ def _record_audit_event(
 
 def audit_fail_closed() -> bool:
     return os.getenv("AUDIT_FAIL_CLOSED", "false").strip().lower() == "true"
+
+
+def accumulator_enabled() -> bool:
+    return revocation_mode() in ("accumulator", "hybrid")
+
+
+def revocation_mode() -> str:
+    mode = os.getenv("REVOCATION_MODE", "status").strip().lower()
+    if mode not in ("status", "accumulator", "hybrid"):
+        return "status"
+    return mode
 
 
 def _append_audit_warning(response: dict, warning: str) -> None:

@@ -44,6 +44,19 @@ def list_audit_events(limit: int = 50) -> dict:
     return _query_json("ListAuditEvents", [str(limit)])
 
 
+def put_accumulator_state(state: dict) -> dict:
+    state_json = json.dumps(state, sort_keys=True, separators=(",", ":"))
+    return _invoke("PutAccumulatorState", [state_json])
+
+
+def get_accumulator_state(accumulator_id: str = "default") -> dict:
+    return _query_json("GetAccumulatorState", [accumulator_id])
+
+
+def list_accumulator_states(limit: int = 20) -> dict:
+    return _query_json("ListAccumulatorStates", [str(limit)])
+
+
 def get_credential_status(credential_id: str) -> dict:
     return _query_json("GetCredentialStatus", [credential_id])
 

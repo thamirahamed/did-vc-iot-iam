@@ -15,6 +15,7 @@ VERIFIER_BASE_URL = "http://localhost:8001"
 
 SHOW_JSON = os.getenv("SHOW_JSON", "0") == "1"
 PAUSE = os.getenv("PAUSE", "1") == "1"
+REVOCATION_MODE = os.getenv("REVOCATION_MODE", "hybrid").strip().lower()
 
 def log(msg: str = "") -> None:
     print(msg, flush=True)
@@ -86,6 +87,63 @@ def tamper_b64(value: str) -> str:
 def sign_nonce(private_key: ed25519.Ed25519PrivateKey, nonce: str) -> str:
     signature = private_key.sign(nonce.encode("utf-8"))
     return b64encode(signature)
+
+
+def accumulator_enabled() -> bool:
+    return REVOCATION_MODE in ("accumulator", "hybrid")
+
+
+def issue_identity(subject_did: str, device_public_key_b64: str) -> tuple[dict, dict | None]:
+    if not accumulator_enabled():
+        return (
+            http_post_json(
+                f"{ISSUER_BASE_URL}/vc/issue/identity",
+                {"subject_did": subject_did, "device_public_key": device_public_key_b64},
+            ),
+            None,
+        )
+    response = http_post_json(
+        f"{ISSUER_BASE_URL}/vc/issue/identity-with-proof",
+        {"subject_did": subject_did, "device_public_key": device_public_key_b64},
+    )
+    return response["vc"], response.get("accumulator_proof")
+
+
+def issue_capability(subject_did: str, action: str, resource: str) -> tuple[dict, dict | None]:
+    if not accumulator_enabled():
+        return (
+            http_post_json(
+                f"{ISSUER_BASE_URL}/vc/issue/capability",
+                {"subject_did": subject_did, "action": action, "resource": resource},
+            ),
+            None,
+        )
+    response = http_post_json(
+        f"{ISSUER_BASE_URL}/vc/issue/capability-with-proof",
+        {"subject_did": subject_did, "action": action, "resource": resource},
+    )
+    return response["vc"], response.get("accumulator_proof")
+
+
+def refresh_proof(credential_id: str) -> dict | None:
+    if not accumulator_enabled():
+        return None
+    return http_post_json(
+        f"{ISSUER_BASE_URL}/revocation/accumulator/refresh-proof",
+        {"credential_id": credential_id},
+    )
+
+
+def add_accumulator_proofs(
+    payload: Dict[str, Any],
+    identity_proof: dict | None,
+    capability_proof: dict | None,
+) -> Dict[str, Any]:
+    if identity_proof is not None:
+        payload["identity_accumulator_proof"] = identity_proof
+    if capability_proof is not None:
+        payload["capability_accumulator_proof"] = capability_proof
+    return payload
 
 
 def main() -> None:
@@ -180,9 +238,9 @@ def main() -> None:
     print_step(step, "Issue an Identity VC binding the DID to the device public key.")
     step += 1
     log("-> POST /vc/issue/identity (issuer)")
-    identity_vc = http_post_json(
-        f"{ISSUER_BASE_URL}/vc/issue/identity",
-        {"subject_did": subject_did, "device_public_key": device_public_key_b64},
+    identity_vc, identity_accumulator_proof = issue_identity(
+        subject_did,
+        device_public_key_b64,
     )
     identity_subject = identity_vc.get("credentialSubject", {})
     identity_issuance = identity_vc.get("issuanceDate", "unknown")
@@ -210,14 +268,12 @@ def main() -> None:
     print_step(step, "Issue a Capability VC granting read access to the device resource.")
     step += 1
     log("-> POST /vc/issue/capability (issuer)")
-    capability_vc = http_post_json(
-        f"{ISSUER_BASE_URL}/vc/issue/capability",
-        {
-            "subject_did": subject_did,
-            "action": "read",
-            "resource": "iot:device:example",
-        },
+    capability_vc, capability_accumulator_proof = issue_capability(
+        subject_did,
+        "read",
+        "iot:device:example",
     )
+    identity_accumulator_proof = refresh_proof(identity_vc["id"])
     capability_subject = capability_vc.get("credentialSubject", {})
     capability_issuance = capability_vc.get("issuanceDate", "unknown")
     capability_expiration = capability_vc.get("expirationDate", "unknown")
@@ -231,6 +287,15 @@ def main() -> None:
             ("Expiration date", capability_expiration),
         ],
     )
+    if accumulator_enabled() and capability_accumulator_proof:
+        print_summary_block(
+            "Accumulator proof:",
+            [
+                ("Mode", "EVOKE inspired Merkle accumulator prototype"),
+                ("Version", str(capability_accumulator_proof.get("version", "unknown"))),
+                ("Root prefix", capability_accumulator_proof.get("root", "")[:16]),
+            ],
+        )
     if SHOW_JSON:
         log()
         log("--- Full API response ---")
@@ -263,14 +328,14 @@ def main() -> None:
     log("-> POST /authorize (verifier)")
     nonce = f"nonce_{uuid.uuid4()}"
     device_signature_b64 = sign_nonce(device_private_key, nonce)
-    allow_payload: Dict[str, Any] = {
+    allow_payload: Dict[str, Any] = add_accumulator_proofs({
         "identity_vc": identity_vc,
         "capability_vc": capability_vc,
         "nonce": nonce,
         "device_signature": device_signature_b64,
         "requested_action": "read",
         "requested_resource": "iot:device:example",
-    }
+    }, identity_accumulator_proof, capability_accumulator_proof)
     allow_response = http_post_json(f"{VERIFIER_BASE_URL}/authorize", allow_payload)
     decision = allow_response.get("decision", "unknown")
     log()
@@ -373,8 +438,17 @@ def main() -> None:
     print_section("Phase 6: Revocation")
     print_step(step, "Revoke the Capability VC at the issuer.")
     step += 1
-    log("This MVP uses a persistent local revocation registry, not an EVOKE accumulator yet.")
-    log("The issuer stores revoked credential IDs in data/revocation_registry.json.")
+    log("This demo keeps the persistent status registry and, in hybrid mode, also updates an EVOKE inspired Merkle accumulator prototype.")
+    if accumulator_enabled():
+        before_state = http_get_json(f"{ISSUER_BASE_URL}/revocation/accumulator/state")
+        print_summary_block(
+            "Accumulator before revocation:",
+            [
+                ("Version", str(before_state.get("version", "unknown"))),
+                ("Root prefix", before_state.get("root", "")[:16]),
+                ("Algorithm", before_state.get("algorithm", "unknown")),
+            ],
+        )
     log("-> POST /vc/revoke (issuer)")
     revoke_response = http_post_json(
         f"{ISSUER_BASE_URL}/vc/revoke",
@@ -391,6 +465,16 @@ def main() -> None:
             ("Reason", revoke_response.get("reason", "n/a")),
         ],
     )
+    if accumulator_enabled():
+        after_state = http_get_json(f"{ISSUER_BASE_URL}/revocation/accumulator/state")
+        print_summary_block(
+            "Accumulator after revocation:",
+            [
+                ("Version", str(after_state.get("version", "unknown"))),
+                ("Root prefix", after_state.get("root", "")[:16]),
+                ("Old proof", "stale after root update"),
+            ],
+        )
     if SHOW_JSON:
         log()
         log("--- Full API response ---")
@@ -406,14 +490,14 @@ def main() -> None:
     log("-> POST /authorize (verifier)")
     nonce = f"nonce_{uuid.uuid4()}"
     revoked_signature_b64 = sign_nonce(device_private_key, nonce)
-    revoked_payload = {
+    revoked_payload = add_accumulator_proofs({
         "identity_vc": identity_vc,
         "capability_vc": capability_vc,
         "nonce": nonce,
         "device_signature": revoked_signature_b64,
         "requested_action": "read",
         "requested_resource": "iot:device:example",
-    }
+    }, identity_accumulator_proof, capability_accumulator_proof)
     revoked_response = http_post_json(f"{VERIFIER_BASE_URL}/authorize", revoked_payload)
     print_summary_block(
         "  Authorization result:",

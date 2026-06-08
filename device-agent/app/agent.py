@@ -87,6 +87,9 @@ def load_env() -> dict:
         "demo_revoke": os.getenv("DEMO_REVOKE", "0") == "1",
         "identity_vc_json": os.getenv("IDENTITY_VC_JSON", ""),
         "capability_vc_json": os.getenv("CAPABILITY_VC_JSON", ""),
+        "identity_accumulator_proof_json": os.getenv("IDENTITY_ACCUMULATOR_PROOF_JSON", ""),
+        "capability_accumulator_proof_json": os.getenv("CAPABILITY_ACCUMULATOR_PROOF_JSON", ""),
+        "revocation_mode": os.getenv("REVOCATION_MODE", "status").strip().lower(),
         "debug": bool(os.getenv("DEBUG", "").strip()),
     }
 
@@ -98,10 +101,15 @@ def prepare_credentials(
     resource: str,
     identity_vc_json: str,
     capability_vc_json: str,
+    identity_accumulator_proof_json: str,
+    capability_accumulator_proof_json: str,
+    revocation_mode: str,
     device_public_key_b64: str,
     debug: bool,
     out_dir: str,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any] | None, Dict[str, Any] | None]:
+    identity_accumulator_proof = None
+    capability_accumulator_proof = None
     if mode == "authorize_only":
         if not identity_vc_json:
             raise RuntimeError("IDENTITY_VC_JSON is required for authorize_only mode")
@@ -110,6 +118,10 @@ def prepare_credentials(
         try:
             identity_vc = json.loads(identity_vc_json)
             capability_vc = json.loads(capability_vc_json)
+            if identity_accumulator_proof_json:
+                identity_accumulator_proof = json.loads(identity_accumulator_proof_json)
+            if capability_accumulator_proof_json:
+                capability_accumulator_proof = json.loads(capability_accumulator_proof_json)
         except json.JSONDecodeError as exc:
             raise RuntimeError("IDENTITY_VC_JSON or CAPABILITY_VC_JSON is not valid JSON") from exc
     else:
@@ -118,14 +130,32 @@ def prepare_credentials(
             {"device_public_key": device_public_key_b64},
         )
         subject_did = subject["did"]
-        identity_vc = http_post_json(
-            f"{issuer_url}/vc/issue/identity",
-            {"subject_did": subject_did, "device_public_key": device_public_key_b64},
-        )
-        capability_vc = http_post_json(
-            f"{issuer_url}/vc/issue/capability",
-            {"subject_did": subject_did, "action": action, "resource": resource},
-        )
+        if revocation_mode in ("accumulator", "hybrid"):
+            identity_response = http_post_json(
+                f"{issuer_url}/vc/issue/identity-with-proof",
+                {"subject_did": subject_did, "device_public_key": device_public_key_b64},
+            )
+            identity_vc = identity_response["vc"]
+            identity_accumulator_proof = identity_response.get("accumulator_proof")
+            capability_response = http_post_json(
+                f"{issuer_url}/vc/issue/capability-with-proof",
+                {"subject_did": subject_did, "action": action, "resource": resource},
+            )
+            capability_vc = capability_response["vc"]
+            capability_accumulator_proof = capability_response.get("accumulator_proof")
+            identity_accumulator_proof = http_post_json(
+                f"{issuer_url}/revocation/accumulator/refresh-proof",
+                {"credential_id": identity_vc["id"]},
+            )
+        else:
+            identity_vc = http_post_json(
+                f"{issuer_url}/vc/issue/identity",
+                {"subject_did": subject_did, "device_public_key": device_public_key_b64},
+            )
+            capability_vc = http_post_json(
+                f"{issuer_url}/vc/issue/capability",
+                {"subject_did": subject_did, "action": action, "resource": resource},
+            )
 
     if debug:
         path = os.path.join(out_dir, "identity_vc.json")
@@ -134,8 +164,16 @@ def prepare_credentials(
         path = os.path.join(out_dir, "capability_vc.json")
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(capability_vc, handle, indent=2, sort_keys=True)
+        if identity_accumulator_proof:
+            path = os.path.join(out_dir, "identity_accumulator_proof.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(identity_accumulator_proof, handle, indent=2, sort_keys=True)
+        if capability_accumulator_proof:
+            path = os.path.join(out_dir, "capability_accumulator_proof.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(capability_accumulator_proof, handle, indent=2, sort_keys=True)
 
-    return identity_vc, capability_vc
+    return identity_vc, capability_vc, identity_accumulator_proof, capability_accumulator_proof
 
 
 def section(step_num: int, title: str) -> None:
@@ -169,6 +207,8 @@ def authorize_once(
     verifier_url: str,
     identity_vc: Dict[str, Any],
     capability_vc: Dict[str, Any],
+    identity_accumulator_proof: Dict[str, Any] | None,
+    capability_accumulator_proof: Dict[str, Any] | None,
     device_private_key: ed25519.Ed25519PrivateKey,
     action: str,
     resource: str,
@@ -188,6 +228,10 @@ def authorize_once(
         "requested_action": action,
         "requested_resource": resource,
     }
+    if identity_accumulator_proof is not None:
+        payload["identity_accumulator_proof"] = identity_accumulator_proof
+    if capability_accumulator_proof is not None:
+        payload["capability_accumulator_proof"] = capability_accumulator_proof
 
     auth_start = time.perf_counter()
     try:
@@ -208,6 +252,8 @@ def run_performance(
     verifier_url: str,
     identity_vc: Dict[str, Any],
     capability_vc: Dict[str, Any],
+    identity_accumulator_proof: Dict[str, Any] | None,
+    capability_accumulator_proof: Dict[str, Any] | None,
     device_private_key: ed25519.Ed25519PrivateKey,
     action: str,
     resource: str,
@@ -222,6 +268,8 @@ def run_performance(
             verifier_url,
             identity_vc,
             capability_vc,
+            identity_accumulator_proof,
+            capability_accumulator_proof,
             device_private_key,
             action,
             resource,
@@ -247,7 +295,13 @@ def run_performance(
 
 def run_demo(
     settings: dict,
-) -> Tuple[Dict[str, Any], Dict[str, Any], ed25519.Ed25519PrivateKey]:
+) -> Tuple[
+    Dict[str, Any],
+    Dict[str, Any],
+    Dict[str, Any] | None,
+    Dict[str, Any] | None,
+    ed25519.Ed25519PrivateKey,
+]:
     issuer_url = settings["issuer_url"]
     verifier_url = settings["verifier_url"]
     action = settings["action"]
@@ -313,10 +367,21 @@ def run_demo(
     section(step, "Identity VC issuance")
     log("Issuing an Identity VC that binds the DID to the device public key.")
     api_call_line("POST", "/vc/issue/identity")
-    identity_vc = http_post_json(
-        f"{issuer_url}/vc/issue/identity",
-        {"subject_did": subject_did, "device_public_key": device_public_key_b64},
-    )
+    revocation_mode = settings["revocation_mode"]
+    identity_accumulator_proof = None
+    capability_accumulator_proof = None
+    if revocation_mode in ("accumulator", "hybrid"):
+        identity_response = http_post_json(
+            f"{issuer_url}/vc/issue/identity-with-proof",
+            {"subject_did": subject_did, "device_public_key": device_public_key_b64},
+        )
+        identity_vc = identity_response["vc"]
+        identity_accumulator_proof = identity_response.get("accumulator_proof")
+    else:
+        identity_vc = http_post_json(
+            f"{issuer_url}/vc/issue/identity",
+            {"subject_did": subject_did, "device_public_key": device_public_key_b64},
+        )
     identity_subject = identity_vc.get("credentialSubject", {})
     summary_kv("VC id", identity_vc.get("id", "unknown"))
     summary_kv("issuer", identity_vc.get("issuer", "unknown"))
@@ -330,10 +395,22 @@ def run_demo(
     section(step, "Capability VC issuance")
     log("Issuing a Capability VC with the requested action and resource.")
     api_call_line("POST", "/vc/issue/capability")
-    capability_vc = http_post_json(
-        f"{issuer_url}/vc/issue/capability",
-        {"subject_did": subject_did, "action": action, "resource": resource},
-    )
+    if revocation_mode in ("accumulator", "hybrid"):
+        capability_response = http_post_json(
+            f"{issuer_url}/vc/issue/capability-with-proof",
+            {"subject_did": subject_did, "action": action, "resource": resource},
+        )
+        capability_vc = capability_response["vc"]
+        capability_accumulator_proof = capability_response.get("accumulator_proof")
+        identity_accumulator_proof = http_post_json(
+            f"{issuer_url}/revocation/accumulator/refresh-proof",
+            {"credential_id": identity_vc["id"]},
+        )
+    else:
+        capability_vc = http_post_json(
+            f"{issuer_url}/vc/issue/capability",
+            {"subject_did": subject_did, "action": action, "resource": resource},
+        )
     capability_subject = capability_vc.get("credentialSubject", {})
     summary_kv("VC id", capability_vc.get("id", "unknown"))
     summary_kv("action", capability_subject.get("action", action))
@@ -369,6 +446,10 @@ def run_demo(
             "requested_action": requested_action,
             "requested_resource": resource,
         }
+        if identity_accumulator_proof is not None:
+            payload["identity_accumulator_proof"] = identity_accumulator_proof
+        if capability_accumulator_proof is not None:
+            payload["capability_accumulator_proof"] = capability_accumulator_proof
         response = http_post_json(f"{verifier_url}/authorize", payload)
         decision = response.get("decision", "unknown")
         reason = response.get("reason", "unknown")
@@ -406,7 +487,13 @@ def run_demo(
 
         run_case("Authorization case D (revoked capability)", "deny", action)
 
-    return identity_vc, capability_vc, device_private_key
+    return (
+        identity_vc,
+        capability_vc,
+        identity_accumulator_proof,
+        capability_accumulator_proof,
+        device_private_key,
+    )
 
 
 def main() -> None:
@@ -422,6 +509,9 @@ def main() -> None:
     mode = settings["mode"]
     identity_vc_json = settings["identity_vc_json"]
     capability_vc_json = settings["capability_vc_json"]
+    identity_accumulator_proof_json = settings["identity_accumulator_proof_json"]
+    capability_accumulator_proof_json = settings["capability_accumulator_proof_json"]
+    revocation_mode = settings["revocation_mode"]
     debug = settings["debug"]
 
     valid_modes = ("perf", "demo", "authorize_only", "full")
@@ -436,10 +526,18 @@ def main() -> None:
 
     identity_vc = None
     capability_vc = None
+    identity_accumulator_proof = None
+    capability_accumulator_proof = None
     device_private_key = None
 
     if mode == "demo":
-        identity_vc, capability_vc, device_private_key = run_demo(settings)
+        (
+            identity_vc,
+            capability_vc,
+            identity_accumulator_proof,
+            capability_accumulator_proof,
+            device_private_key,
+        ) = run_demo(settings)
     else:
         if mode in ("perf", "full"):
             wait_for_service(f"{issuer_url}/health")
@@ -454,13 +552,21 @@ def main() -> None:
             )
         )
 
-        identity_vc, capability_vc = prepare_credentials(
+        (
+            identity_vc,
+            capability_vc,
+            identity_accumulator_proof,
+            capability_accumulator_proof,
+        ) = prepare_credentials(
             mode,
             issuer_url,
             action,
             resource,
             identity_vc_json,
             capability_vc_json,
+            identity_accumulator_proof_json,
+            capability_accumulator_proof_json,
+            revocation_mode,
             device_public_key_b64,
             debug,
             out_dir,
@@ -474,6 +580,8 @@ def main() -> None:
         verifier_url,
         identity_vc,
         capability_vc,
+        identity_accumulator_proof,
+        capability_accumulator_proof,
         device_private_key,
         action,
         resource,

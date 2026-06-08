@@ -47,6 +47,17 @@ type AuditEvent struct {
 	Metadata     map[string]interface{} `json:"metadata"`
 }
 
+type AccumulatorStateRecord struct {
+	DocType       string `json:"docType"`
+	AccumulatorID string `json:"accumulator_id"`
+	Version       int    `json:"version"`
+	Root          string `json:"root"`
+	Algorithm     string `json:"algorithm"`
+	ActiveCount   int    `json:"active_count"`
+	RevokedCount  int    `json:"revoked_count"`
+	UpdatedAt     string `json:"updated_at"`
+}
+
 func (s *SmartContract) Ping(ctx contractapi.TransactionContextInterface) string {
 	return "pong"
 }
@@ -283,6 +294,85 @@ func (s *SmartContract) ListAuditEvents(ctx contractapi.TransactionContextInterf
 	return events, nil
 }
 
+func (s *SmartContract) PutAccumulatorState(ctx contractapi.TransactionContextInterface, stateJson string) error {
+	var state AccumulatorStateRecord
+	if err := json.Unmarshal([]byte(stateJson), &state); err != nil {
+		return fmt.Errorf("failed to unmarshal accumulator state: %w", err)
+	}
+	if state.AccumulatorID == "" {
+		return fmt.Errorf("accumulator_id is required")
+	}
+	if state.Root == "" {
+		return fmt.Errorf("root is required")
+	}
+	if state.Algorithm == "" {
+		return fmt.Errorf("algorithm is required")
+	}
+	if state.UpdatedAt == "" {
+		return fmt.Errorf("updated_at is required")
+	}
+
+	state.DocType = "AccumulatorState"
+	bytes, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("failed to marshal accumulator state: %w", err)
+	}
+	return ctx.GetStub().PutState(accumulatorStateKey(state.AccumulatorID, state.Version), bytes)
+}
+
+func (s *SmartContract) GetAccumulatorState(ctx contractapi.TransactionContextInterface, accumulatorID string) (*AccumulatorStateRecord, error) {
+	if accumulatorID == "" {
+		return nil, fmt.Errorf("accumulator_id is required")
+	}
+	states, err := s.listAccumulatorStateRecords(ctx, accumulatorID, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(states) == 0 {
+		return nil, fmt.Errorf("accumulator state not found: %s", accumulatorID)
+	}
+	return &states[0], nil
+}
+
+func (s *SmartContract) ListAccumulatorStates(ctx contractapi.TransactionContextInterface, limit string) ([]AccumulatorStateRecord, error) {
+	limitInt, err := strconv.Atoi(limit)
+	if err != nil || limitInt < 1 {
+		return nil, fmt.Errorf("limit must be a positive integer")
+	}
+	return s.listAccumulatorStateRecords(ctx, "", limitInt)
+}
+
+func (s *SmartContract) listAccumulatorStateRecords(ctx contractapi.TransactionContextInterface, accumulatorID string, limitInt int) ([]AccumulatorStateRecord, error) {
+	prefix := "ACCUMULATOR::"
+	if accumulatorID != "" {
+		prefix = "ACCUMULATOR::" + accumulatorID + "::"
+	}
+	results, err := ctx.GetStub().GetStateByRange(prefix, prefix+"\uffff")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list accumulator states: %w", err)
+	}
+	defer results.Close()
+
+	all := []AccumulatorStateRecord{}
+	for results.HasNext() {
+		item, err := results.Next()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read iterator: %w", err)
+		}
+		var state AccumulatorStateRecord
+		if err := json.Unmarshal(item.Value, &state); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal accumulator state: %w", err)
+		}
+		all = append(all, state)
+	}
+
+	states := []AccumulatorStateRecord{}
+	for index := len(all) - 1; index >= 0 && len(states) < limitInt; index-- {
+		states = append(states, all[index])
+	}
+	return states, nil
+}
+
 func didKey(did string) string {
 	return "DID::" + did
 }
@@ -293,6 +383,10 @@ func credentialKey(credentialID string) string {
 
 func auditKey(createdAt string, eventID string) string {
 	return "AUDIT::" + createdAt + "::" + eventID
+}
+
+func accumulatorStateKey(accumulatorID string, version int) string {
+	return fmt.Sprintf("ACCUMULATOR::%s::%020d", accumulatorID, version)
 }
 
 func main() {

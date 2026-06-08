@@ -15,9 +15,29 @@ This repo contains minimal starter code and simple health checks. It avoids adva
 
 ## Revocation status
 
-Each issued VC includes `credentialStatus`. Revocation is currently an MVP simple status lookup backed by a persistent local JSON registry at `REVOCATION_REGISTRY_PATH`, defaulting to `data/revocation_registry.json`. The issuer exposes `/vc/revoke`, `/vc/status`, and `/vc/revoked`, and the verifier checks both Identity VC and Capability VC revocation status during authorization.
+Each issued VC includes `credentialStatus`. The baseline revocation path is a simple status lookup backed by a persistent local JSON registry at `REVOCATION_REGISTRY_PATH`, defaulting to `data/revocation_registry.json`. The issuer exposes `/vc/revoke`, `/vc/status`, and `/vc/revoked`, and the verifier can check both Identity VC and Capability VC revocation status during authorization.
 
-This completes local credential lifecycle support for the prototype. Fabric-backed revocation and EVOKE/accumulator-based revocation are not implemented yet; this registry can later be moved to Fabric or replaced with accumulator-based revocation.
+Revocation mode is selected with `REVOCATION_MODE`, defaulting to `status`:
+
+- `status`: use the original status lookup only.
+- `accumulator`: require accumulator proofs for Identity VC and Capability VC.
+- `hybrid`: verify accumulator proofs first and then use status lookup as a safety baseline.
+
+The accumulator implementation is an **EVOKE inspired Merkle accumulator prototype** using deterministic SHA-256 Merkle roots. It is not the exact ECC accumulator from EVOKE. The issuer hashes final signed VCs, maintains active credential records, computes an accumulator root, and issues Merkle witness proofs. Presentations send the signed VC plus the corresponding proof. When credentials are issued or revoked, the root changes and old proofs become stale.
+
+Local accumulator state is stored at `ACCUMULATOR_STORE_PATH`, defaulting to `data/accumulator/issuer_accumulator.json`. Fabric mode stores only compact accumulator state metadata: accumulator id, version, root, algorithm, active count, revoked count, and update time. Full VCs and witness lists are not stored on Fabric.
+
+Accumulator endpoints:
+
+```text
+POST /vc/issue/identity-with-proof
+POST /vc/issue/capability-with-proof
+GET /revocation/accumulator/state
+GET /revocation/accumulator/proof?credential_id=...
+POST /revocation/accumulator/refresh-proof
+```
+
+Devices with intermittent links can refresh active credential proofs through `/revocation/accumulator/refresh-proof` after reconnecting. Refreshing proof for a revoked credential fails.
 
 ## Audit logging
 
@@ -65,7 +85,7 @@ Identity VC issuance requires the DID to be registered and the requested `device
 
 This prototype targets Hyperledger Fabric v2.5.15 with Fabric CA v1.5.15. Fabric v2.5.x is used because it is the current LTS line. The local Fabric path uses the official Fabric samples test network with the default Raft ordering service and Go chaincode.
 
-Fabric stores only metadata: DID metadata, credential status metadata, and revocation status. It does not store full VCs, private keys, or sensor data. Local mode remains the default with `FABRIC_ENABLED=false`. Fabric mode uses peer CLI integration first; Fabric Gateway is not used in this pass and can be considered later for cleaner long-running client integration and latency work.
+Fabric stores only metadata: DID metadata, credential status metadata, revocation status, audit events, and accumulator root/state metadata. It does not store full VCs, private keys, witness lists, or sensor data. Local mode remains the default with `FABRIC_ENABLED=false`. Fabric mode uses peer CLI integration first; Fabric Gateway is not used in this pass and can be considered later for cleaner long-running client integration and latency work.
 
 Install Fabric samples matching the target versions:
 

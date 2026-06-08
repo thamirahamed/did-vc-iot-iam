@@ -102,6 +102,33 @@ def main() -> int:
     if not any(event.get("event_id") == audit_event_id for event in audit_events):
         raise RuntimeError(f"test audit event not found: {audit_events}")
 
+    print("Accumulator state write")
+    accumulator_state = {
+        "accumulator_id": "default",
+        "version": 1,
+        "root": "abc123",
+        "algorithm": "MERKLE_SHA256_EVOKE_INSPIRED",
+        "active_count": 1,
+        "revoked_count": 0,
+        "updated_at": now,
+    }
+    expect_ok(
+        invoke(
+            "PutAccumulatorState",
+            [json.dumps(accumulator_state, sort_keys=True)],
+        )
+    )
+
+    print("Accumulator state read")
+    state = query_json("GetAccumulatorState", ["default"])
+    if state.get("root") != accumulator_state["root"]:
+        raise RuntimeError(f"unexpected accumulator state: {state}")
+
+    print("Accumulator state list")
+    states = query_json("ListAccumulatorStates", ["10"])
+    if not any(item.get("root") == accumulator_state["root"] for item in states):
+        raise RuntimeError(f"test accumulator state not found: {states}")
+
     print("Fabric smoke test passed")
     return 0
 

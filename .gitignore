@@ -14,3 +14,8 @@ data/audit/
 data/did_registry.json
 data/revocation_registry.json
 *.jsonl
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+fabric/chaincode/iam/iam

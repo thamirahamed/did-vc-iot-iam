@@ -3,9 +3,11 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Tuple
+from urllib.request import urlopen
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+from . import accumulator
 from . import audit
 from .did_resolver import resolve_did
 from . import fabric_client
@@ -74,13 +76,20 @@ def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
     if not ok:
         return _audit_authorization_response(payload, "deny", reason)
 
-    ok, reason = _check_credential_status(identity_vc, "identity")
-    if not ok:
-        return _audit_authorization_response(payload, "deny", reason)
+    mode = revocation_mode()
+    if mode in ("accumulator", "hybrid"):
+        ok, reason = _check_accumulator_proofs(payload, identity_vc, capability_vc)
+        if not ok:
+            return _audit_authorization_response(payload, "deny", reason)
 
-    ok, reason = _check_credential_status(capability_vc, "capability")
-    if not ok:
-        return _audit_authorization_response(payload, "deny", reason)
+    if mode in ("status", "hybrid"):
+        ok, reason = _check_credential_status(identity_vc, "identity")
+        if not ok:
+            return _audit_authorization_response(payload, "deny", reason)
+
+        ok, reason = _check_credential_status(capability_vc, "capability")
+        if not ok:
+            return _audit_authorization_response(payload, "deny", reason)
 
     ok, reason = _enforce_capability(
         capability_vc,
@@ -202,6 +211,62 @@ def _check_fabric_did(did: str) -> Tuple[bool, str]:
     if fabric_client.fabric_fail_closed():
         return False, "ledger status unavailable"
     return True, ""
+
+
+def _check_accumulator_proofs(
+    payload: AuthorizeRequest,
+    identity_vc: Dict[str, Any],
+    capability_vc: Dict[str, Any],
+) -> Tuple[bool, str]:
+    identity_proof = payload.identity_accumulator_proof
+    capability_proof = payload.capability_accumulator_proof
+    if not identity_proof or not capability_proof:
+        return False, "accumulator proof missing"
+
+    state, reason = _latest_accumulator_state()
+    if not state:
+        return False, reason
+
+    expected_root = state.get("root", "")
+    expected_version = int(state.get("version", -1))
+    for proof in (identity_proof, capability_proof):
+        if proof.get("root") != expected_root:
+            return False, "accumulator proof stale"
+        try:
+            proof_version = int(proof.get("version"))
+        except (TypeError, ValueError):
+            return False, "accumulator proof invalid"
+        if proof_version != expected_version:
+            return False, "accumulator proof stale"
+
+    if not accumulator.verify_proof(identity_vc, identity_proof, expected_root):
+        return False, "accumulator proof invalid"
+    if not accumulator.verify_proof(capability_vc, capability_proof, expected_root):
+        return False, "accumulator proof invalid"
+    return True, ""
+
+
+def _latest_accumulator_state() -> Tuple[Dict[str, Any] | None, str]:
+    if fabric_client.fabric_enabled():
+        result = fabric_client.get_accumulator_state("default")
+        if not result.get("ok"):
+            return None, "accumulator state unavailable"
+        state = result.get("result")
+        if isinstance(state, dict):
+            return state, ""
+        return None, "accumulator state unavailable"
+
+    issuer_url = os.getenv("ISSUER_URL", "http://issuer:8000").rstrip("/")
+    try:
+        with urlopen(f"{issuer_url}/revocation/accumulator/state", timeout=5) as response:
+            body = response.read().decode("utf-8")
+        state = json.loads(body)
+    except Exception:
+        return None, "accumulator state unavailable"
+
+    if isinstance(state, dict):
+        return state, ""
+    return None, "accumulator state unavailable"
 
 
 def _extract_did_document_key(did_document: Dict[str, Any]) -> str:
@@ -337,6 +402,13 @@ def _best_capability_credential_id(payload: AuthorizeRequest) -> str:
 
 def audit_fail_closed() -> bool:
     return os.getenv("AUDIT_FAIL_CLOSED", "false").strip().lower() == "true"
+
+
+def revocation_mode() -> str:
+    mode = os.getenv("REVOCATION_MODE", "status").strip().lower()
+    if mode not in ("status", "accumulator", "hybrid"):
+        return "status"
+    return mode
 
 
 def _b64decode(value: str) -> bytes:

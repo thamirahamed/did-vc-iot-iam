@@ -67,12 +67,9 @@ def main() -> None:
     )
 
     log("Requesting identity VC from issuer")
-    identity_vc = http_post_json(
-        f"{ISSUER_BASE_URL}/vc/issue/identity",
-        {
-            "subject_did": subject_did,
-            "device_public_key": device_public_key_b64,
-        },
+    identity_vc, identity_accumulator_proof = issue_identity_with_proof(
+        subject_did,
+        device_public_key_b64,
     )
     identity_id = identity_vc.get("id", "unknown")
     log(f"Identity VC issued, id: {identity_id}")
@@ -111,14 +108,12 @@ def main() -> None:
     )
 
     log("Requesting capability VC from issuer")
-    capability_vc = http_post_json(
-        f"{ISSUER_BASE_URL}/vc/issue/capability",
-        {
-            "subject_did": subject_did,
-            "action": "read",
-            "resource": "iot:device:example",
-        },
+    capability_vc, capability_accumulator_proof = issue_capability_with_proof(
+        subject_did,
+        "read",
+        "iot:device:example",
     )
+    identity_accumulator_proof = refresh_accumulator_proof(identity_vc["id"])
     cap_id = capability_vc.get("id", "unknown")
     log(f"Capability VC issued, id: {cap_id}")
 
@@ -128,12 +123,56 @@ def main() -> None:
         device_private_key,
         "read",
         "iot:device:example",
+        identity_accumulator_proof,
+        capability_accumulator_proof,
     )
 
     log("Authorize test allow case")
     allow = http_post_json(f"{VERIFIER_BASE_URL}/authorize", payload)
     log(f"Allow response: {allow}")
     assert allow["decision"] == "allow", f"expected allow, got {allow}"
+    log("Accumulator allow checked")
+
+    if revocation_mode() in ("accumulator", "hybrid"):
+        log("Authorize test deny missing accumulator proof case")
+        payload_missing_proof = build_authorize_payload(
+            identity_vc,
+            capability_vc,
+            device_private_key,
+            "read",
+            "iot:device:example",
+        )
+        deny_missing_proof = http_post_json(
+            f"{VERIFIER_BASE_URL}/authorize", payload_missing_proof
+        )
+        log(f"Deny missing accumulator proof response: {deny_missing_proof}")
+        assert deny_missing_proof == {
+            "decision": "deny",
+            "reason": "accumulator proof missing",
+        }, f"expected accumulator proof missing deny, got {deny_missing_proof}"
+        log("Accumulator missing proof deny checked")
+
+        log("Authorize test deny tampered accumulator proof case")
+        tampered_proof = json.loads(json.dumps(capability_accumulator_proof))
+        tampered_proof["credential_hash"] = tamper_hash(tampered_proof["credential_hash"])
+        payload_tampered_proof = build_authorize_payload(
+            identity_vc,
+            capability_vc,
+            device_private_key,
+            "read",
+            "iot:device:example",
+            identity_accumulator_proof,
+            tampered_proof,
+        )
+        deny_tampered_proof = http_post_json(
+            f"{VERIFIER_BASE_URL}/authorize", payload_tampered_proof
+        )
+        log(f"Deny tampered accumulator proof response: {deny_tampered_proof}")
+        assert deny_tampered_proof == {
+            "decision": "deny",
+            "reason": "accumulator proof invalid",
+        }, f"expected accumulator proof invalid deny, got {deny_tampered_proof}"
+        log("Accumulator tampered proof deny checked")
 
     log("Authorize test deny missing DID registry entry case")
     original_document = remove_registry_did(subject_did)
@@ -144,6 +183,8 @@ def main() -> None:
             device_private_key,
             "read",
             "iot:device:example",
+            identity_accumulator_proof,
+            capability_accumulator_proof,
         )
         deny_missing_did = http_post_json(
             f"{VERIFIER_BASE_URL}/authorize", payload_missing_did
@@ -168,6 +209,8 @@ def main() -> None:
             device_private_key,
             "read",
             "iot:device:example",
+            identity_accumulator_proof,
+            capability_accumulator_proof,
         )
         deny_key_mismatch = http_post_json(
             f"{VERIFIER_BASE_URL}/authorize", payload_key_mismatch
@@ -227,6 +270,8 @@ def main() -> None:
         device_private_key,
         "read",
         "iot:device:example",
+        identity_accumulator_proof,
+        capability_accumulator_proof,
     )
     deny_revoked_capability = http_post_json(
         f"{VERIFIER_BASE_URL}/authorize", payload_revoked_capability
@@ -235,18 +280,34 @@ def main() -> None:
     assert deny_revoked_capability == {
         "decision": "deny",
         "reason": "capability credential revoked",
+    } or deny_revoked_capability == {
+        "decision": "deny",
+        "reason": "accumulator proof stale",
     }, f"expected capability revocation deny, got {deny_revoked_capability}"
+    log("Accumulator revoked credential deny checked")
 
     log("Requesting replacement capability VC from issuer")
-    capability_vc = http_post_json(
-        f"{ISSUER_BASE_URL}/vc/issue/capability",
-        {
-            "subject_did": subject_did,
-            "action": "read",
-            "resource": "iot:device:example",
-        },
+    capability_vc, capability_accumulator_proof = issue_capability_with_proof(
+        subject_did,
+        "read",
+        "iot:device:example",
     )
+    identity_accumulator_proof = refresh_accumulator_proof(identity_vc["id"])
     log(f"Replacement capability VC issued, id: {capability_vc.get('id', 'unknown')}")
+
+    if revocation_mode() in ("accumulator", "hybrid"):
+        refreshed_capability_proof = refresh_accumulator_proof(capability_vc["id"])
+        assert refreshed_capability_proof["credential_hash"] == capability_accumulator_proof[
+            "credential_hash"
+        ], f"unexpected refreshed capability proof: {refreshed_capability_proof}"
+        revoked_refresh_error = http_post_expect_error(
+            f"{ISSUER_BASE_URL}/revocation/accumulator/refresh-proof",
+            {"credential_id": cap_id},
+        )
+        assert "revoked" in revoked_refresh_error.get("detail", ""), (
+            f"expected revoked proof refresh failure, got {revoked_refresh_error}"
+        )
+        log("Accumulator proof refresh checked")
 
     log("Authorize test allow replacement capability VC case")
     payload_replacement_capability = build_authorize_payload(
@@ -255,6 +316,8 @@ def main() -> None:
         device_private_key,
         "read",
         "iot:device:example",
+        identity_accumulator_proof,
+        capability_accumulator_proof,
     )
     allow_replacement = http_post_json(
         f"{VERIFIER_BASE_URL}/authorize", payload_replacement_capability
@@ -282,6 +345,8 @@ def main() -> None:
         device_private_key,
         "read",
         "iot:device:example",
+        identity_accumulator_proof,
+        capability_accumulator_proof,
     )
     deny_revoked_identity = http_post_json(
         f"{VERIFIER_BASE_URL}/authorize", payload_revoked_identity
@@ -290,6 +355,9 @@ def main() -> None:
     assert deny_revoked_identity == {
         "decision": "deny",
         "reason": "identity credential revoked",
+    } or deny_revoked_identity == {
+        "decision": "deny",
+        "reason": "accumulator proof stale",
     }, f"expected identity revocation deny, got {deny_revoked_identity}"
 
     log("Issuing fresh identity and capability VCs for remaining deny cases")
@@ -298,27 +366,24 @@ def main() -> None:
         {"device_public_key": device_public_key_b64},
     )
     subject_did = fresh_subject["did"]
-    identity_vc = http_post_json(
-        f"{ISSUER_BASE_URL}/vc/issue/identity",
-        {
-            "subject_did": subject_did,
-            "device_public_key": device_public_key_b64,
-        },
+    identity_vc, identity_accumulator_proof = issue_identity_with_proof(
+        subject_did,
+        device_public_key_b64,
     )
-    capability_vc = http_post_json(
-        f"{ISSUER_BASE_URL}/vc/issue/capability",
-        {
-            "subject_did": subject_did,
-            "action": "read",
-            "resource": "iot:device:example",
-        },
+    capability_vc, capability_accumulator_proof = issue_capability_with_proof(
+        subject_did,
+        "read",
+        "iot:device:example",
     )
+    identity_accumulator_proof = refresh_accumulator_proof(identity_vc["id"])
     payload = build_authorize_payload(
         identity_vc,
         capability_vc,
         device_private_key,
         "read",
         "iot:device:example",
+        identity_accumulator_proof,
+        capability_accumulator_proof,
     )
 
     log("Authorize test deny wrong action case")
@@ -339,6 +404,8 @@ def main() -> None:
         device_private_key,
         "read",
         "iot:device:example",
+        identity_accumulator_proof,
+        capability_accumulator_proof,
     )
     deny_tampered_identity = http_post_json(
         f"{VERIFIER_BASE_URL}/authorize", payload_tampered_identity
@@ -353,12 +420,9 @@ def main() -> None:
         f"{ISSUER_BASE_URL}/did/create",
         {"device_public_key": device_public_key_b64},
     )
-    other_identity_vc = http_post_json(
-        f"{ISSUER_BASE_URL}/vc/issue/identity",
-        {
-            "subject_did": other_subject["did"],
-            "device_public_key": device_public_key_b64,
-        },
+    other_identity_vc, other_identity_accumulator_proof = issue_identity_with_proof(
+        other_subject["did"],
+        device_public_key_b64,
     )
     payload_mismatch = build_authorize_payload(
         other_identity_vc,
@@ -366,6 +430,8 @@ def main() -> None:
         device_private_key,
         "read",
         "iot:device:example",
+        other_identity_accumulator_proof,
+        capability_accumulator_proof,
     )
     deny_mismatch = http_post_json(f"{VERIFIER_BASE_URL}/authorize", payload_mismatch)
     log(f"Deny subject mismatch response: {deny_mismatch}")
@@ -378,6 +444,8 @@ def main() -> None:
         device_private_key,
         "read",
         "iot:device:example",
+        identity_accumulator_proof,
+        capability_accumulator_proof,
     )
     payload_bad_signature["device_signature"] = tamper_b64(
         payload_bad_signature["device_signature"]
@@ -461,6 +529,66 @@ def assert_event_types(audit_response: Dict[str, Any], expected: set[str]) -> No
     assert not missing, f"missing audit events {sorted(missing)}, got {events}"
 
 
+def issue_identity_with_proof(subject_did: str, device_public_key_b64: str) -> tuple[dict, dict | None]:
+    if revocation_mode() == "status":
+        vc = http_post_json(
+            f"{ISSUER_BASE_URL}/vc/issue/identity",
+            {
+                "subject_did": subject_did,
+                "device_public_key": device_public_key_b64,
+            },
+        )
+        return vc, None
+    response = http_post_json(
+        f"{ISSUER_BASE_URL}/vc/issue/identity-with-proof",
+        {
+            "subject_did": subject_did,
+            "device_public_key": device_public_key_b64,
+        },
+    )
+    return response["vc"], response["accumulator_proof"]
+
+
+def issue_capability_with_proof(
+    subject_did: str, action: str, resource: str
+) -> tuple[dict, dict | None]:
+    if revocation_mode() == "status":
+        vc = http_post_json(
+            f"{ISSUER_BASE_URL}/vc/issue/capability",
+            {
+                "subject_did": subject_did,
+                "action": action,
+                "resource": resource,
+            },
+        )
+        return vc, None
+    response = http_post_json(
+        f"{ISSUER_BASE_URL}/vc/issue/capability-with-proof",
+        {
+            "subject_did": subject_did,
+            "action": action,
+            "resource": resource,
+        },
+    )
+    return response["vc"], response["accumulator_proof"]
+
+
+def refresh_accumulator_proof(credential_id: str) -> dict | None:
+    if revocation_mode() == "status":
+        return None
+    return http_post_json(
+        f"{ISSUER_BASE_URL}/revocation/accumulator/refresh-proof",
+        {"credential_id": credential_id},
+    )
+
+
+def revocation_mode() -> str:
+    mode = os.getenv("REVOCATION_MODE", "hybrid").strip().lower()
+    if mode not in ("status", "accumulator", "hybrid"):
+        return "hybrid"
+    return mode
+
+
 def b64encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii")
 
@@ -524,10 +652,12 @@ def build_authorize_payload(
     device_private_key: ed25519.Ed25519PrivateKey,
     requested_action: str,
     requested_resource: str,
+    identity_accumulator_proof: Dict[str, Any] | None = None,
+    capability_accumulator_proof: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     nonce = f"nonce_{uuid.uuid4()}"
     device_signature = device_private_key.sign(nonce.encode("utf-8"))
-    return {
+    payload = {
         "identity_vc": identity_vc,
         "capability_vc": capability_vc,
         "nonce": nonce,
@@ -535,6 +665,11 @@ def build_authorize_payload(
         "requested_action": requested_action,
         "requested_resource": requested_resource,
     }
+    if identity_accumulator_proof is not None:
+        payload["identity_accumulator_proof"] = identity_accumulator_proof
+    if capability_accumulator_proof is not None:
+        payload["capability_accumulator_proof"] = capability_accumulator_proof
+    return payload
 
 
 def tamper_b64(value: str) -> str:
@@ -542,6 +677,13 @@ def tamper_b64(value: str) -> str:
         return value
     last = value[-1]
     return value[:-1] + ("A" if last != "A" else "B")
+
+
+def tamper_hash(value: str) -> str:
+    if not value:
+        return value
+    last = value[-1]
+    return value[:-1] + ("0" if last != "0" else "1")
 
 
 if __name__ == "__main__":
