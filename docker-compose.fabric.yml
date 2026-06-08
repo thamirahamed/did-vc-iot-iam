@@ -1,0 +1,59 @@
+services:
+  issuer:
+    environment:
+      FABRIC_ENABLED: "true"
+      FABRIC_PEER_MODE: docker
+      FABRIC_CHANNEL_NAME: mychannel
+      FABRIC_CHAINCODE_NAME: iam
+      FABRIC_DOCKER_NETWORK: fabric_test
+      FABRIC_CORE_PEER_TLS_ENABLED: "true"
+      FABRIC_TLS_ENABLED: "true"
+      FABRIC_FAIL_CLOSED: "true"
+      DID_RESOLUTION_FAIL_CLOSED: "true"
+      REVOCATION_FAIL_CLOSED: "true"
+      FABRIC_DOCKER_USE_VOLUMES_FROM_SELF: "true"
+      FABRIC_CRYPTO_CONFIG_CONTAINER_PATH: /fabric/organizations
+      FABRIC_CORE_PEER_LOCALMSPID: Org1MSP
+      FABRIC_CORE_PEER_MSPCONFIGPATH: /fabric/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp
+      FABRIC_CORE_PEER_ADDRESS: peer0.org1.example.com:7051
+      FABRIC_CORE_PEER_TLS_ROOTCERT_FILE: /fabric/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+      FABRIC_ORDERER_ADDRESS: orderer.example.com:7050
+      FABRIC_ORDERER_CA: /fabric/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem
+    volumes:
+      - type: bind
+        source: ${FABRIC_SAMPLES_ORGS_HOST_PATH:?Set FABRIC_SAMPLES_ORGS_HOST_PATH to fabric-samples/test-network/organizations}
+        target: /fabric/organizations
+        read_only: true
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+
+  verifier:
+    environment:
+      ISSUER_URL: http://issuer:8000
+      FABRIC_ENABLED: "true"
+      FABRIC_PEER_MODE: docker
+      FABRIC_CHANNEL_NAME: mychannel
+      FABRIC_CHAINCODE_NAME: iam
+      FABRIC_DOCKER_NETWORK: fabric_test
+      FABRIC_CORE_PEER_TLS_ENABLED: "true"
+      FABRIC_TLS_ENABLED: "true"
+      FABRIC_FAIL_CLOSED: "true"
+      DID_RESOLUTION_FAIL_CLOSED: "true"
+      REVOCATION_FAIL_CLOSED: "true"
+      FABRIC_DOCKER_USE_VOLUMES_FROM_SELF: "true"
+      FABRIC_CRYPTO_CONFIG_CONTAINER_PATH: /fabric/organizations
+      FABRIC_CORE_PEER_LOCALMSPID: Org1MSP
+      FABRIC_CORE_PEER_MSPCONFIGPATH: /fabric/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp
+      FABRIC_CORE_PEER_ADDRESS: peer0.org1.example.com:7051
+      FABRIC_CORE_PEER_TLS_ROOTCERT_FILE: /fabric/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+      FABRIC_ORDERER_ADDRESS: orderer.example.com:7050
+      FABRIC_ORDERER_CA: /fabric/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem
+    volumes:
+      - type: bind
+        source: ${FABRIC_SAMPLES_ORGS_HOST_PATH:?Set FABRIC_SAMPLES_ORGS_HOST_PATH to fabric-samples/test-network/organizations}
+        target: /fabric/organizations
+        read_only: true
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock

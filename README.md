@@ -38,31 +38,40 @@ curl -sSL https://bit.ly/2ysbOFE | bash -s -- 2.5.15 1.5.15
 export FABRIC_SAMPLES_PATH=/path/to/fabric-samples
 ```
 
+On Windows Git Bash, keep both this repository and `fabric-samples` in paths without spaces. Run the wrapper explicitly with `bash ./network.sh ...` so the script can disable MSYS path conversion around Fabric and Docker calls. You can avoid exporting `FABRIC_SAMPLES_PATH` in every terminal session by creating `fabric/.fabric-env` once:
+
+```bash
+FABRIC_SAMPLES_PATH="$HOME/Documents/CodingProjects/fabric-samples"
+```
+
 Start the test network and deploy this repo's chaincode:
 
 ```bash
 cd fabric
-./network.sh up
-./network.sh deployCC
-./network.sh ping
+bash ./network.sh up
+bash ./network.sh deployCC-docker
+bash ./network.sh ping
 ```
 
 You do not need Go installed locally for chaincode checks. Run them through Docker:
 
 ```bash
 cd fabric
-./network.sh cc-go-version
-./network.sh cc-tidy
-./network.sh cc-test
-./network.sh cc-build
+bash ./network.sh cc-go-version
+bash ./network.sh cc-tidy
+bash ./network.sh cc-test
+bash ./network.sh cc-build
 ```
 
-The Fabric samples `deployCC` command may still require its own local prerequisites depending on your Fabric samples setup. The Docker-based commands above validate this repo's Go chaincode without installing Go on the host.
+Use `bash ./network.sh deployCC-docker` when Go is not installed locally. The original `bash ./network.sh deployCC` command is still available for setups with local Go installed because Fabric samples package Go chaincode with the host `go` command.
 
 On Windows Git Bash, run the script explicitly with `bash`; it disables MSYS path conversion around Docker commands internally:
 
 ```bash
 cd fabric
+bash ./network.sh up
+bash ./network.sh deployCC-docker
+bash ./network.sh ping
 bash ./network.sh cc-go-version
 bash ./network.sh cc-test
 ```
@@ -97,6 +106,7 @@ export FABRIC_CRYPTO_CONFIG_CONTAINER_PATH=/etc/hyperledger/fabric/crypto
 export FABRIC_CORE_PEER_LOCALMSPID=Org1MSP
 export FABRIC_CORE_PEER_MSPCONFIGPATH=/etc/hyperledger/fabric/crypto/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp
 export FABRIC_CORE_PEER_ADDRESS=peer0.org1.example.com:7051
+export FABRIC_CORE_PEER_TLS_ENABLED=true
 export FABRIC_CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/crypto/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
 export FABRIC_ORDERER_ADDRESS=orderer.example.com:7050
 export FABRIC_ORDERER_CA=/etc/hyperledger/fabric/crypto/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem
@@ -108,6 +118,45 @@ Run the Fabric smoke test:
 ```bash
 python scripts/fabric_smoke_test.py
 ```
+
+### Fabric Docker Compose mode
+
+Use this mode when the issuer and verifier containers should talk to Fabric. The service images include the Docker CLI only; they use the host Docker socket to start short-lived `hyperledger/fabric-tools` peer CLI containers.
+
+Set the Fabric samples organizations path in PowerShell:
+
+```powershell
+$env:FABRIC_SAMPLES_ORGS_HOST_PATH="C:/Users/kebab/Documents/CodingProjects/fabric-samples/test-network/organizations"
+```
+
+Or copy `.env.fabric.example` to your own local `.env.fabric` and run Compose with `--env-file .env.fabric`. The local `.env.fabric` file is ignored by git.
+
+Start the Fabric network first in Git Bash:
+
+```bash
+cd fabric
+bash ./network.sh up
+bash ./network.sh deployCC-docker
+bash ./network.sh ping
+```
+
+Then start the services and run the integration test from the repository root:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml config
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml logs issuer
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml logs verifier
+python scripts/integration_test.py
+```
+
+Expected integration test result:
+
+```text
+All integration tests passed
+```
+
+Fabric Docker Compose mode sets `FABRIC_ENABLED=true`, `FABRIC_PEER_MODE=docker`, `FABRIC_DOCKER_USE_VOLUMES_FROM_SELF=true`, `FABRIC_CORE_PEER_TLS_ENABLED=true`, and `FABRIC_TLS_ENABLED=true`. The issuer and verifier mount Fabric crypto material at `/fabric/organizations`, and sibling peer CLI containers inherit that mount through Docker `--volumes-from`.
 
 ## Automated Testing
 

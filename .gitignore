@@ -1,8 +1,16 @@
 .env*
+!.env.fabric.example
+.env.dev
+.env.fabric
+fabric/.fabric-env
+fabric/chaincode/iam/vendor/
+**/vendor/
+vendor/
 perf-out/
 results/
 *.csv
 data/
+data/audit/
 data/did_registry.json
 data/revocation_registry.json
 *.jsonl

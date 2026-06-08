@@ -21,6 +21,7 @@ def main() -> int:
     print(f"Peer mode: {peer_mode()}")
     print(f"Channel: {channel()}")
     print(f"Chaincode: {chaincode()}")
+    print(f"CORE_PEER_TLS_ENABLED: {peer_tls_enabled()}")
     if peer_mode() == "docker":
         crypto_path = Path(os.getenv("FABRIC_CRYPTO_CONFIG_HOST_PATH", ""))
         print(f"Docker crypto host path exists: {crypto_path.exists()}")
@@ -99,6 +100,8 @@ def invoke(function: str, args: List[str]) -> dict:
     if tls_enabled():
         command.extend(["--tls", "--cafile", os.getenv("FABRIC_ORDERER_CA", "")])
     command.extend(["-o", os.getenv("FABRIC_ORDERER_ADDRESS", "")])
+    command.extend(peer_connection_args())
+    command.append("--waitForEvent")
     return run(command)
 
 
@@ -229,11 +232,53 @@ def peer_mode() -> str:
 
 
 def peer_env(env: dict) -> dict:
+    env["CORE_PEER_TLS_ENABLED"] = peer_tls_enabled()
     env["CORE_PEER_LOCALMSPID"] = os.getenv("FABRIC_CORE_PEER_LOCALMSPID", "")
     env["CORE_PEER_MSPCONFIGPATH"] = os.getenv("FABRIC_CORE_PEER_MSPCONFIGPATH", "")
     env["CORE_PEER_ADDRESS"] = os.getenv("FABRIC_CORE_PEER_ADDRESS", "")
     env["CORE_PEER_TLS_ROOTCERT_FILE"] = os.getenv("FABRIC_CORE_PEER_TLS_ROOTCERT_FILE", "")
     return env
+
+
+def peer_tls_enabled() -> str:
+    return os.getenv(
+        "FABRIC_CORE_PEER_TLS_ENABLED",
+        os.getenv("FABRIC_TLS_ENABLED", "true"),
+    )
+
+
+def peer_connection_args() -> List[str]:
+    if peer_mode() != "docker":
+        return []
+
+    crypto_root = os.getenv(
+        "FABRIC_CRYPTO_CONFIG_CONTAINER_PATH",
+        "/etc/hyperledger/fabric/crypto",
+    )
+    peer_addresses = csv_env(
+        "FABRIC_PEER_ADDRESSES",
+        "peer0.org1.example.com:7051,peer0.org2.example.com:9051",
+    )
+    tls_root_cert_files = csv_env(
+        "FABRIC_PEER_TLS_ROOTCERT_FILES",
+        ",".join(
+            [
+                f"{crypto_root}/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt",
+                f"{crypto_root}/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt",
+            ]
+        ),
+    )
+
+    args: List[str] = []
+    for index, peer_address in enumerate(peer_addresses):
+        args.extend(["--peerAddresses", peer_address])
+        if tls_enabled() and index < len(tls_root_cert_files):
+            args.extend(["--tlsRootCertFiles", tls_root_cert_files[index]])
+    return args
+
+
+def csv_env(name: str, default: str) -> List[str]:
+    return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
 
 
 if __name__ == "__main__":

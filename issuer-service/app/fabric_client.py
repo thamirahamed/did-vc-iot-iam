@@ -84,6 +84,8 @@ def _invoke(function: str, args: List[str]) -> dict:
     if _tls_enabled():
         command.extend(["--tls", "--cafile", os.getenv("FABRIC_ORDERER_CA", "")])
     command.extend(["-o", os.getenv("FABRIC_ORDERER_ADDRESS", "")])
+    command.extend(_peer_connection_args())
+    command.append("--waitForEvent")
 
     return _run(command)
 
@@ -130,7 +132,7 @@ def _validate_env(write: bool) -> dict:
     ]
     if write:
         required.extend(["FABRIC_ORDERER_ADDRESS", "FABRIC_ORDERER_CA"])
-    if _peer_mode() == "docker":
+    if _peer_mode() == "docker" and not _docker_use_volumes_from_self():
         required.append("FABRIC_CRYPTO_CONFIG_HOST_PATH")
 
     missing = [name for name in required if not os.getenv(name)]
@@ -175,7 +177,6 @@ def _run_local(command: List[str]) -> dict:
 
 
 def _run_docker(command: List[str]) -> dict:
-    host_crypto_path = os.getenv("FABRIC_CRYPTO_CONFIG_HOST_PATH", "")
     container_crypto_path = os.getenv(
         "FABRIC_CRYPTO_CONFIG_CONTAINER_PATH",
         "/etc/hyperledger/fabric/crypto",
@@ -186,9 +187,13 @@ def _run_docker(command: List[str]) -> dict:
         "--rm",
         "--network",
         os.getenv("FABRIC_DOCKER_NETWORK", "fabric_test"),
-        "-v",
-        f"{host_crypto_path}:{container_crypto_path}:ro",
     ]
+    if _docker_use_volumes_from_self():
+        docker_command.extend(["--volumes-from", f"{_current_container_id()}:ro"])
+    else:
+        host_crypto_path = os.getenv("FABRIC_CRYPTO_CONFIG_HOST_PATH", "")
+        docker_command.extend(["-v", f"{host_crypto_path}:{container_crypto_path}:ro"])
+
     for key, value in _peer_env({}).items():
         docker_command.extend(["-e", f"{key}={value}"])
     docker_command.extend(
@@ -221,6 +226,7 @@ def _run_docker(command: List[str]) -> dict:
 
 
 def _peer_env(env: dict) -> dict:
+    env["CORE_PEER_TLS_ENABLED"] = _peer_tls_enabled()
     env["CORE_PEER_LOCALMSPID"] = os.getenv("FABRIC_CORE_PEER_LOCALMSPID", "")
     env["CORE_PEER_MSPCONFIGPATH"] = os.getenv("FABRIC_CORE_PEER_MSPCONFIGPATH", "")
     env["CORE_PEER_ADDRESS"] = os.getenv("FABRIC_CORE_PEER_ADDRESS", "")
@@ -252,3 +258,52 @@ def _chaincode() -> str:
 
 def _tls_enabled() -> bool:
     return os.getenv("FABRIC_TLS_ENABLED", "true").strip().lower() != "false"
+
+
+def _peer_tls_enabled() -> str:
+    return os.getenv(
+        "FABRIC_CORE_PEER_TLS_ENABLED",
+        os.getenv("FABRIC_TLS_ENABLED", "true"),
+    )
+
+
+def _docker_use_volumes_from_self() -> bool:
+    return os.getenv("FABRIC_DOCKER_USE_VOLUMES_FROM_SELF", "false").strip().lower() == "true"
+
+
+def _current_container_id() -> str:
+    return os.getenv("HOSTNAME", "").strip()
+
+
+def _peer_connection_args() -> List[str]:
+    if _peer_mode() != "docker":
+        return []
+
+    crypto_root = os.getenv(
+        "FABRIC_CRYPTO_CONFIG_CONTAINER_PATH",
+        "/etc/hyperledger/fabric/crypto",
+    )
+    peer_addresses = _csv_env(
+        "FABRIC_PEER_ADDRESSES",
+        "peer0.org1.example.com:7051,peer0.org2.example.com:9051",
+    )
+    tls_root_cert_files = _csv_env(
+        "FABRIC_PEER_TLS_ROOTCERT_FILES",
+        ",".join(
+            [
+                f"{crypto_root}/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt",
+                f"{crypto_root}/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt",
+            ]
+        ),
+    )
+
+    args: List[str] = []
+    for index, peer_address in enumerate(peer_addresses):
+        args.extend(["--peerAddresses", peer_address])
+        if _tls_enabled() and index < len(tls_root_cert_files):
+            args.extend(["--tlsRootCertFiles", tls_root_cert_files[index]])
+    return args
+
+
+def _csv_env(name: str, default: str) -> List[str]:
+    return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]

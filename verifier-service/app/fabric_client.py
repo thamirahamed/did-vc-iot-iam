@@ -65,7 +65,7 @@ def _validate_env() -> dict:
         "FABRIC_CORE_PEER_ADDRESS",
         "FABRIC_CORE_PEER_TLS_ROOTCERT_FILE",
     ]
-    if _peer_mode() == "docker":
+    if _peer_mode() == "docker" and not _docker_use_volumes_from_self():
         required.append("FABRIC_CRYPTO_CONFIG_HOST_PATH")
     missing = [name for name in required if not os.getenv(name)]
     if missing:
@@ -109,7 +109,6 @@ def _run_local(command: List[str]) -> dict:
 
 
 def _run_docker(command: List[str]) -> dict:
-    host_crypto_path = os.getenv("FABRIC_CRYPTO_CONFIG_HOST_PATH", "")
     container_crypto_path = os.getenv(
         "FABRIC_CRYPTO_CONFIG_CONTAINER_PATH",
         "/etc/hyperledger/fabric/crypto",
@@ -120,9 +119,13 @@ def _run_docker(command: List[str]) -> dict:
         "--rm",
         "--network",
         os.getenv("FABRIC_DOCKER_NETWORK", "fabric_test"),
-        "-v",
-        f"{host_crypto_path}:{container_crypto_path}:ro",
     ]
+    if _docker_use_volumes_from_self():
+        docker_command.extend(["--volumes-from", f"{_current_container_id()}:ro"])
+    else:
+        host_crypto_path = os.getenv("FABRIC_CRYPTO_CONFIG_HOST_PATH", "")
+        docker_command.extend(["-v", f"{host_crypto_path}:{container_crypto_path}:ro"])
+
     for key, value in _peer_env({}).items():
         docker_command.extend(["-e", f"{key}={value}"])
     docker_command.append(
@@ -153,6 +156,7 @@ def _run_docker(command: List[str]) -> dict:
 
 
 def _peer_env(env: dict) -> dict:
+    env["CORE_PEER_TLS_ENABLED"] = _peer_tls_enabled()
     env["CORE_PEER_LOCALMSPID"] = os.getenv("FABRIC_CORE_PEER_LOCALMSPID", "")
     env["CORE_PEER_MSPCONFIGPATH"] = os.getenv("FABRIC_CORE_PEER_MSPCONFIGPATH", "")
     env["CORE_PEER_ADDRESS"] = os.getenv("FABRIC_CORE_PEER_ADDRESS", "")
@@ -168,3 +172,18 @@ def _peer_bin() -> str:
     if _peer_mode() == "docker":
         return "peer"
     return os.getenv("FABRIC_PEER_BIN", "peer")
+
+
+def _peer_tls_enabled() -> str:
+    return os.getenv(
+        "FABRIC_CORE_PEER_TLS_ENABLED",
+        os.getenv("FABRIC_TLS_ENABLED", "true"),
+    )
+
+
+def _docker_use_volumes_from_self() -> bool:
+    return os.getenv("FABRIC_DOCKER_USE_VOLUMES_FROM_SELF", "false").strip().lower() == "true"
+
+
+def _current_container_id() -> str:
+    return os.getenv("HOSTNAME", "").strip()
