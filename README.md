@@ -244,6 +244,51 @@ docker compose -f docker-compose.yml -f docker-compose.perf.yml --profile lite u
 
 Outputs are written to the `perf-out` folder. Optional per-iteration delay is controlled by `SLEEP_MS`.
 
+## Benchmarking
+
+Batch 1 benchmark scripts exercise the completed IAM pipeline through the running issuer and verifier HTTP APIs. Results are written under `results/`, which is ignored by git.
+
+Run a local benchmark:
+
+```powershell
+docker compose up -d --build
+python scripts/benchmark_pipeline.py
+```
+
+Run a Fabric mode benchmark after the Fabric test network and chaincode are already running:
+
+```powershell
+$env:FABRIC_SAMPLES_ORGS_HOST_PATH="C:/Users/kebab/Documents/CodingProjects/fabric-samples/test-network/organizations"
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml up -d --build
+python scripts/benchmark_pipeline.py
+```
+
+Benchmark environment variables:
+
+```text
+ISSUER_URL=http://localhost:8000
+VERIFIER_URL=http://localhost:8001
+BENCHMARK_RUNS=30
+BENCHMARK_WARMUP_RUNS=3
+BENCHMARK_OUTPUT_DIR=results
+BENCHMARK_LABEL=manual
+REVOCATION_MODE=hybrid
+FABRIC_ENABLED=false
+```
+
+The benchmark creates a raw per-iteration CSV and a summarized CSV:
+
+```text
+results/benchmark_raw_<timestamp>.csv
+results/benchmark_summary_<timestamp>.csv
+```
+
+You can regenerate a summary from an existing raw CSV:
+
+```powershell
+python scripts/summarize_results.py results/benchmark_raw_<timestamp>.csv
+```
+
 ## Device agent demo mode
 
 Run the demo walkthrough inside the device agent container:
