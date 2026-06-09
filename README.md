@@ -272,6 +272,7 @@ BENCHMARK_RUNS=30
 BENCHMARK_WARMUP_RUNS=3
 BENCHMARK_OUTPUT_DIR=results
 BENCHMARK_LABEL=manual
+BENCHMARK_PROFILE=full
 REVOCATION_MODE=hybrid
 FABRIC_ENABLED=false
 ```
@@ -287,6 +288,120 @@ You can regenerate a summary from an existing raw CSV:
 
 ```powershell
 python scripts/summarize_results.py results/benchmark_raw_<timestamp>.csv
+```
+
+Benchmark profiles are metadata unless the services are started with matching environment:
+
+```text
+BENCHMARK_PROFILE=full
+BENCHMARK_PROFILE=no_audit
+BENCHMARK_PROFILE=status_only
+BENCHMARK_PROFILE=accumulator_hybrid
+```
+
+For `no_audit`, start services with `AUDIT_ENABLED=false`. This skips local audit JSONL writes and Fabric audit chaincode writes while keeping IAM operations unchanged. The default is `AUDIT_ENABLED=true`.
+
+## Fabric Overhead Microbenchmarks
+
+Use `scripts/benchmark_fabric_ops.py` to isolate peer CLI, chaincode read/write, audit, and accumulator state overhead without running the full IAM lifecycle. It uses the existing Python Fabric client wrappers and writes synthetic metadata only.
+
+PowerShell Fabric environment:
+
+```powershell
+$env:FABRIC_ENABLED="true"
+$env:FABRIC_PEER_MODE="docker"
+$env:FABRIC_CHANNEL_NAME="mychannel"
+$env:FABRIC_CHAINCODE_NAME="iam"
+$env:FABRIC_DOCKER_NETWORK="fabric_test"
+$env:FABRIC_CRYPTO_CONFIG_HOST_PATH="C:\Users\kebab\Documents\CodingProjects\fabric-samples\test-network\organizations"
+$env:FABRIC_CRYPTO_CONFIG_CONTAINER_PATH="/etc/hyperledger/fabric/crypto"
+$env:FABRIC_CORE_PEER_TLS_ENABLED="true"
+$env:FABRIC_CORE_PEER_LOCALMSPID="Org1MSP"
+$env:FABRIC_CORE_PEER_MSPCONFIGPATH="/etc/hyperledger/fabric/crypto/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp"
+$env:FABRIC_CORE_PEER_ADDRESS="peer0.org1.example.com:7051"
+$env:FABRIC_CORE_PEER_TLS_ROOTCERT_FILE="/etc/hyperledger/fabric/crypto/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt"
+$env:FABRIC_ORDERER_ADDRESS="orderer.example.com:7050"
+$env:FABRIC_ORDERER_CA="/etc/hyperledger/fabric/crypto/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem"
+$env:FABRIC_TLS_ENABLED="true"
+```
+
+Run Fabric operation benchmarks:
+
+```powershell
+$env:FABRIC_OPS_RUNS="5"
+$env:FABRIC_OPS_WARMUP_RUNS="1"
+python scripts/benchmark_fabric_ops.py
+```
+
+Outputs:
+
+```text
+results/fabric_ops_raw_<timestamp>.csv
+results/fabric_ops_summary_<timestamp>.csv
+```
+
+Compare two pipeline benchmark summaries:
+
+```powershell
+python scripts/compare_benchmarks.py results\benchmark_summary_local.csv results\benchmark_summary_fabric.csv --left-label local --right-label fabric
+```
+
+Comparison output:
+
+```text
+results/benchmark_comparison_<timestamp>.csv
+```
+
+## Resource Usage Benchmarking
+
+Docker resource monitoring samples CPU, memory, network IO, and block IO for the issuer, verifier, and Fabric containers while the benchmark runs. It uses `docker stats --no-stream --format json` and writes results under `results/`, which is ignored by git.
+
+Run a local benchmark with resource monitoring:
+
+```powershell
+docker compose up -d --build
+$env:BENCHMARK_RUNS="10"
+$env:BENCHMARK_WARMUP_RUNS="2"
+$env:BENCHMARK_LABEL="local-resource-test"
+$env:RESOURCE_MONITOR_ENABLED="true"
+python scripts/benchmark_pipeline.py
+```
+
+Run a Fabric benchmark with resource monitoring after the Fabric test network and chaincode are already running:
+
+```powershell
+$env:FABRIC_SAMPLES_ORGS_HOST_PATH="C:/Users/kebab/Documents/CodingProjects/fabric-samples/test-network/organizations"
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml up -d --build
+$env:BENCHMARK_RUNS="3"
+$env:BENCHMARK_WARMUP_RUNS="1"
+$env:BENCHMARK_LABEL="fabric-resource-test"
+$env:RESOURCE_MONITOR_ENABLED="true"
+python scripts/benchmark_pipeline.py
+```
+
+Resource monitor environment variables:
+
+```text
+RESOURCE_MONITOR_ENABLED=false
+RESOURCE_MONITOR_INTERVAL_SECONDS=1
+RESOURCE_MONITOR_CONTAINERS=
+RESOURCE_MONITOR_OUTPUT_DIR=results
+RESOURCE_MONITOR_LABEL=<BENCHMARK_LABEL>
+RESOURCE_MONITOR_FAIL_CLOSED=false
+```
+
+Resource output files:
+
+```text
+results/resource_usage_<timestamp>.csv
+results/resource_summary_<timestamp>.csv
+```
+
+Run the monitor standalone for a fixed duration:
+
+```powershell
+python scripts/collect_docker_stats.py --duration 60 --label test
+python scripts/summarize_results.py results/resource_usage_<label>_<timestamp>.csv
 ```
 
 ## Device agent demo mode

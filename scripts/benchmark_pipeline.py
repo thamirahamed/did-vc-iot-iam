@@ -2,6 +2,7 @@ import base64
 import csv
 import json
 import os
+import subprocess
 import sys
 import time
 import uuid
@@ -15,7 +16,7 @@ from urllib.request import Request, urlopen
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from summarize_results import summarize_raw_csv
+from summarize_results import summarize_csv
 
 
 ISSUER_URL = os.getenv("ISSUER_URL", "http://localhost:8000").rstrip("/")
@@ -24,9 +25,18 @@ RUNS = int(os.getenv("BENCHMARK_RUNS", "30"))
 WARMUP_RUNS = int(os.getenv("BENCHMARK_WARMUP_RUNS", "3"))
 OUTPUT_DIR = Path(os.getenv("BENCHMARK_OUTPUT_DIR", "results"))
 BENCHMARK_LABEL = os.getenv("BENCHMARK_LABEL", "manual")
+BENCHMARK_PROFILE = os.getenv("BENCHMARK_PROFILE", "full").strip().lower()
 REVOCATION_MODE = os.getenv("REVOCATION_MODE", "")
 FABRIC_ENABLED = os.getenv("FABRIC_ENABLED", "")
 HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "30"))
+RESOURCE_MONITOR_ENABLED = os.getenv("RESOURCE_MONITOR_ENABLED", "false").strip().lower() == "true"
+RESOURCE_MONITOR_FAIL_CLOSED = (
+    os.getenv("RESOURCE_MONITOR_FAIL_CLOSED", "false").strip().lower() == "true"
+)
+RESOURCE_MONITOR_INTERVAL_SECONDS = os.getenv("RESOURCE_MONITOR_INTERVAL_SECONDS", "1")
+RESOURCE_MONITOR_CONTAINERS = os.getenv("RESOURCE_MONITOR_CONTAINERS", "")
+RESOURCE_MONITOR_OUTPUT_DIR = Path(os.getenv("RESOURCE_MONITOR_OUTPUT_DIR", str(OUTPUT_DIR)))
+RESOURCE_MONITOR_LABEL = os.getenv("RESOURCE_MONITOR_LABEL", BENCHMARK_LABEL)
 
 ACTION = "read"
 WRONG_ACTION = "write"
@@ -61,6 +71,7 @@ SIZE_FIELDS = [
 RAW_FIELDS = [
     "timestamp",
     "benchmark_label",
+    "benchmark_profile",
     "iteration",
     "fabric_enabled",
     "revocation_mode",
@@ -97,40 +108,140 @@ def main() -> None:
         raise SystemExit("BENCHMARK_RUNS must be at least 1")
     if WARMUP_RUNS < 0:
         raise SystemExit("BENCHMARK_WARMUP_RUNS must be 0 or greater")
+    validate_benchmark_profile()
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    RESOURCE_MONITOR_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     run_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     raw_path = OUTPUT_DIR / f"benchmark_raw_{run_timestamp}.csv"
+    resource_path = RESOURCE_MONITOR_OUTPUT_DIR / f"resource_usage_{run_timestamp}.csv"
+    resource_monitor = None
 
-    print(f"Issuer URL: {ISSUER_URL}")
-    print(f"Verifier URL: {VERIFIER_URL}")
-    print("Running health checks")
-    http_get_json(f"{ISSUER_URL}/health")
-    http_get_json(f"{VERIFIER_URL}/health")
+    try:
+        print(f"Issuer URL: {ISSUER_URL}")
+        print(f"Verifier URL: {VERIFIER_URL}")
+        print(f"Benchmark profile: {BENCHMARK_PROFILE}")
+        print_profile_warning()
+        print("Running health checks")
+        http_get_json(f"{ISSUER_URL}/health")
+        http_get_json(f"{VERIFIER_URL}/health")
 
-    for iteration in range(1, WARMUP_RUNS + 1):
-        print(f"Warmup iteration {iteration}/{WARMUP_RUNS}")
-        run_iteration(iteration)
+        if RESOURCE_MONITOR_ENABLED:
+            resource_monitor = start_resource_monitor(resource_path)
+            wait_for_resource_monitor_sample(resource_monitor, resource_path)
 
-    failures = 0
-    with raw_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=RAW_FIELDS)
-        writer.writeheader()
-        for iteration in range(1, RUNS + 1):
-            print(f"Measured iteration {iteration}/{RUNS}")
-            row = run_iteration(iteration)
-            if row["error"]:
-                failures += 1
-                print(f"Iteration {iteration} failed: {row['error']}")
-            writer.writerow(row)
-            handle.flush()
+        for iteration in range(1, WARMUP_RUNS + 1):
+            print(f"Warmup iteration {iteration}/{WARMUP_RUNS}")
+            run_iteration(iteration)
 
-    summary_path = summarize_raw_csv(raw_path)
+        failures = 0
+        with raw_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=RAW_FIELDS)
+            writer.writeheader()
+            for iteration in range(1, RUNS + 1):
+                print(f"Measured iteration {iteration}/{RUNS}")
+                row = run_iteration(iteration)
+                if row["error"]:
+                    failures += 1
+                    print(f"Iteration {iteration} failed: {row['error']}")
+                writer.writerow(row)
+                handle.flush()
+    finally:
+        if resource_monitor is not None:
+            stop_resource_monitor(resource_monitor)
+
+    summary_path = summarize_csv(raw_path)
+    resource_summary_path = None
+    if RESOURCE_MONITOR_ENABLED:
+        print(f"Resource results: {resource_path}")
+        if resource_path.exists():
+            try:
+                resource_summary_path = summarize_csv(resource_path)
+            except SystemExit as exc:
+                handle_resource_monitor_failure(f"resource summary failed: {exc}")
+
     print(f"Raw results: {raw_path}")
     print(f"Summary results: {summary_path}")
+    if resource_summary_path is not None:
+        print(f"Resource summary results: {resource_summary_path}")
 
     if failures == RUNS:
         raise SystemExit(1)
+
+
+def start_resource_monitor(resource_path: Path) -> subprocess.Popen:
+    command = [
+        sys.executable,
+        str(Path(__file__).with_name("collect_docker_stats.py")),
+        "--label",
+        RESOURCE_MONITOR_LABEL,
+        "--output",
+        str(resource_path),
+        "--interval",
+        RESOURCE_MONITOR_INTERVAL_SECONDS,
+    ]
+    if RESOURCE_MONITOR_CONTAINERS.strip():
+        command.extend(["--containers", RESOURCE_MONITOR_CONTAINERS])
+
+    try:
+        process = subprocess.Popen(command)
+    except Exception as exc:
+        handle_resource_monitor_failure(f"failed to start resource monitor: {exc}")
+        return None
+
+    time.sleep(0.5)
+    if process.poll() is not None:
+        handle_resource_monitor_failure(
+            f"resource monitor exited early with status {process.returncode}"
+        )
+    return process
+
+
+def wait_for_resource_monitor_sample(process: subprocess.Popen | None, resource_path: Path) -> None:
+    if process is None:
+        return
+    try:
+        interval = float(RESOURCE_MONITOR_INTERVAL_SECONDS)
+    except ValueError:
+        interval = 1.0
+    deadline = time.monotonic() + max(10.0, interval + 5.0)
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            handle_resource_monitor_failure(
+                f"resource monitor exited early with status {process.returncode}"
+            )
+            return
+        if csv_has_data_row(resource_path):
+            return
+        time.sleep(0.2)
+    handle_resource_monitor_failure("resource monitor did not write a sample before benchmark start")
+
+
+def csv_has_data_row(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            return sum(1 for _ in handle) > 1
+    except OSError:
+        return False
+
+
+def stop_resource_monitor(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=10)
+
+
+def handle_resource_monitor_failure(message: str) -> None:
+    if RESOURCE_MONITOR_FAIL_CLOSED:
+        raise RuntimeError(message)
+    print(f"Resource monitor warning: {message}")
 
 
 def run_iteration(iteration: int) -> dict[str, Any]:
@@ -301,11 +412,43 @@ def empty_row(iteration: int) -> dict[str, Any]:
     row = {field: "" for field in RAW_FIELDS}
     row["timestamp"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     row["benchmark_label"] = BENCHMARK_LABEL
+    row["benchmark_profile"] = BENCHMARK_PROFILE
     row["iteration"] = iteration
     row["fabric_enabled"] = FABRIC_ENABLED
     row["revocation_mode"] = REVOCATION_MODE
     row["error"] = ""
     return row
+
+
+def validate_benchmark_profile() -> None:
+    profiles = {"full", "no_audit", "status_only", "accumulator_hybrid"}
+    if BENCHMARK_PROFILE not in profiles:
+        raise SystemExit(
+            f"BENCHMARK_PROFILE must be one of {', '.join(sorted(profiles))}"
+        )
+
+
+def print_profile_warning() -> None:
+    revocation_mode = REVOCATION_MODE.strip().lower()
+    audit_enabled = os.getenv("AUDIT_ENABLED", "true").strip().lower()
+    if BENCHMARK_PROFILE == "no_audit" and audit_enabled != "false":
+        print(
+            "Benchmark profile warning: no_audit requires services started with "
+            "AUDIT_ENABLED=false to disable audit writes."
+        )
+    if BENCHMARK_PROFILE == "status_only" and revocation_mode != "status":
+        print(
+            "Benchmark profile warning: status_only records metadata only; start "
+            "services with REVOCATION_MODE=status for status-only behavior."
+        )
+    if BENCHMARK_PROFILE == "accumulator_hybrid" and revocation_mode not in (
+        "accumulator",
+        "hybrid",
+    ):
+        print(
+            "Benchmark profile warning: accumulator_hybrid records metadata only; "
+            "start services with REVOCATION_MODE=hybrid or accumulator."
+        )
 
 
 def issue_identity(subject_did: str, device_public_key_b64: str) -> tuple[dict[str, Any], float]:

@@ -15,6 +15,7 @@ from .revocation import get_revocation_record, list_revoked, revoke_credential
 from .vc import issue_capability_vc, issue_identity_vc
 
 app = FastAPI()
+_AUDIT_DISABLED_WARNING_PRINTED = False
 
 # Generate issuer identity once at startup and keep keys in memory.
 ISSUER_DID = create_did()
@@ -320,6 +321,9 @@ def _record_audit_event(
     reason: str = "",
     metadata: Optional[dict] = None,
 ) -> None:
+    if not audit_enabled():
+        _print_audit_disabled_warning()
+        return
     try:
         event = audit.write_audit_event(
             event_type=event_type,
@@ -348,6 +352,18 @@ def _record_audit_event(
 
 def audit_fail_closed() -> bool:
     return os.getenv("AUDIT_FAIL_CLOSED", "false").strip().lower() == "true"
+
+
+def audit_enabled() -> bool:
+    return os.getenv("AUDIT_ENABLED", "true").strip().lower() != "false"
+
+
+def _print_audit_disabled_warning() -> None:
+    global _AUDIT_DISABLED_WARNING_PRINTED
+    if _AUDIT_DISABLED_WARNING_PRINTED:
+        return
+    print("audit disabled by AUDIT_ENABLED=false", flush=True)
+    _AUDIT_DISABLED_WARNING_PRINTED = True
 
 
 def accumulator_enabled() -> bool:

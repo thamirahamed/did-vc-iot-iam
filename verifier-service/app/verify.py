@@ -14,6 +14,8 @@ from . import fabric_client
 from .models import AuthorizeRequest, AuthorizeResponse
 from .revocation_client import check_revoked
 
+_AUDIT_DISABLED_WARNING_PRINTED = False
+
 
 def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
     issuer_key_b64 = os.getenv("ISSUER_PUBLIC_KEY_B64", "").strip()
@@ -364,6 +366,9 @@ def _enforce_capability(
 def _audit_authorization_response(
     payload: AuthorizeRequest, decision: str, reason: str
 ) -> AuthorizeResponse:
+    if not audit_enabled():
+        _print_audit_disabled_warning()
+        return AuthorizeResponse(decision=decision, reason=reason)
     try:
         event = audit.write_audit_event(
             event_type="AUTH_ALLOW" if decision == "allow" else "AUTH_DENY",
@@ -402,6 +407,18 @@ def _best_capability_credential_id(payload: AuthorizeRequest) -> str:
 
 def audit_fail_closed() -> bool:
     return os.getenv("AUDIT_FAIL_CLOSED", "false").strip().lower() == "true"
+
+
+def audit_enabled() -> bool:
+    return os.getenv("AUDIT_ENABLED", "true").strip().lower() != "false"
+
+
+def _print_audit_disabled_warning() -> None:
+    global _AUDIT_DISABLED_WARNING_PRINTED
+    if _AUDIT_DISABLED_WARNING_PRINTED:
+        return
+    print("audit disabled by AUDIT_ENABLED=false", flush=True)
+    _AUDIT_DISABLED_WARNING_PRINTED = True
 
 
 def revocation_mode() -> str:

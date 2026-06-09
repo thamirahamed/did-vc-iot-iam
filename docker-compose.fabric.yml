@@ -11,6 +11,7 @@ services:
       FABRIC_FAIL_CLOSED: "true"
       REVOCATION_MODE: "hybrid"
       ACCUMULATOR_STORE_PATH: /app/data/accumulator/issuer_accumulator.json
+      AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
       AUDIT_FAIL_CLOSED: "false"
       AUDIT_WRITE_TIMEOUT_SECONDS: "5"
       FABRIC_CLI_TIMEOUT_SECONDS: "20"
@@ -45,6 +46,7 @@ services:
       FABRIC_TLS_ENABLED: "true"
       FABRIC_FAIL_CLOSED: "true"
       REVOCATION_MODE: "hybrid"
+      AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
       AUDIT_FAIL_CLOSED: "false"
       AUDIT_WRITE_TIMEOUT_SECONDS: "5"
       FABRIC_CLI_TIMEOUT_SECONDS: "20"
