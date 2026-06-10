@@ -1,7 +1,39 @@
 services:
+  fabric-adapter:
+    build: ./fabric-adapter
+    ports:
+      - "8010:8010"
+    environment:
+      FABRIC_CHANNEL_NAME: mychannel
+      FABRIC_CHAINCODE_NAME: iam
+      FABRIC_CORE_PEER_TLS_ENABLED: "true"
+      CORE_PEER_TLS_ENABLED: "true"
+      FABRIC_TLS_ENABLED: "true"
+      FABRIC_ADAPTER_TIMEOUT_SECONDS: "20"
+      CORE_PEER_LOCALMSPID: Org1MSP
+      CORE_PEER_MSPCONFIGPATH: /fabric/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp
+      CORE_PEER_ADDRESS: peer0.org1.example.com:7051
+      CORE_PEER_TLS_ROOTCERT_FILE: /fabric/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+      FABRIC_PEER_ADDRESSES: peer0.org1.example.com:7051,peer0.org2.example.com:9051
+      FABRIC_PEER_TLS_ROOTCERT_FILES: /fabric/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt,/fabric/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt
+      FABRIC_ORDERER_ADDRESS: orderer.example.com:7050
+      FABRIC_ORDERER_CA: /fabric/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem
+    volumes:
+      - type: bind
+        source: ${FABRIC_SAMPLES_ORGS_HOST_PATH:?Set FABRIC_SAMPLES_ORGS_HOST_PATH to fabric-samples/test-network/organizations}
+        target: /fabric/organizations
+        read_only: true
+    networks:
+      - default
+      - fabric_test
+
   issuer:
+    depends_on:
+      - fabric-adapter
     environment:
       FABRIC_ENABLED: "true"
+      FABRIC_CLIENT_MODE: adapter
+      FABRIC_ADAPTER_URL: http://fabric-adapter:8010
       FABRIC_PEER_MODE: docker
       FABRIC_CHANNEL_NAME: mychannel
       FABRIC_CHAINCODE_NAME: iam
@@ -12,6 +44,9 @@ services:
       REVOCATION_MODE: "hybrid"
       ACCUMULATOR_STORE_PATH: /app/data/accumulator/issuer_accumulator.json
       AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
+      AUDIT_MODE: ${AUDIT_MODE:-sync}
+      AUDIT_QUEUE_MAX_SIZE: ${AUDIT_QUEUE_MAX_SIZE:-1000}
+      AUDIT_FLUSH_TIMEOUT_SECONDS: ${AUDIT_FLUSH_TIMEOUT_SECONDS:-10}
       AUDIT_FAIL_CLOSED: "false"
       AUDIT_WRITE_TIMEOUT_SECONDS: "5"
       FABRIC_CLI_TIMEOUT_SECONDS: "20"
@@ -35,9 +70,14 @@ services:
         target: /var/run/docker.sock
 
   verifier:
+    depends_on:
+      - issuer
+      - fabric-adapter
     environment:
       ISSUER_URL: http://issuer:8000
       FABRIC_ENABLED: "true"
+      FABRIC_CLIENT_MODE: adapter
+      FABRIC_ADAPTER_URL: http://fabric-adapter:8010
       FABRIC_PEER_MODE: docker
       FABRIC_CHANNEL_NAME: mychannel
       FABRIC_CHAINCODE_NAME: iam
@@ -47,6 +87,9 @@ services:
       FABRIC_FAIL_CLOSED: "true"
       REVOCATION_MODE: "hybrid"
       AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
+      AUDIT_MODE: ${AUDIT_MODE:-sync}
+      AUDIT_QUEUE_MAX_SIZE: ${AUDIT_QUEUE_MAX_SIZE:-1000}
+      AUDIT_FLUSH_TIMEOUT_SECONDS: ${AUDIT_FLUSH_TIMEOUT_SECONDS:-10}
       AUDIT_FAIL_CLOSED: "false"
       AUDIT_WRITE_TIMEOUT_SECONDS: "5"
       FABRIC_CLI_TIMEOUT_SECONDS: "20"
@@ -68,3 +111,7 @@ services:
       - type: bind
         source: /var/run/docker.sock
         target: /var/run/docker.sock
+
+networks:
+  fabric_test:
+    external: true

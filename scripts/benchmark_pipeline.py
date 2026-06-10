@@ -7,9 +7,10 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone
+from http.client import RemoteDisconnected
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -28,7 +29,11 @@ BENCHMARK_LABEL = os.getenv("BENCHMARK_LABEL", "manual")
 BENCHMARK_PROFILE = os.getenv("BENCHMARK_PROFILE", "full").strip().lower()
 REVOCATION_MODE = os.getenv("REVOCATION_MODE", "")
 FABRIC_ENABLED = os.getenv("FABRIC_ENABLED", "")
+FABRIC_CLIENT_MODE = os.getenv("FABRIC_CLIENT_MODE", "peer_cli")
+FABRIC_ADAPTER_URL = os.getenv("FABRIC_ADAPTER_URL", "")
 HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "30"))
+HTTP_RETRY_ATTEMPTS = int(os.getenv("HTTP_RETRY_ATTEMPTS", "5"))
+HTTP_RETRY_SLEEP_SECONDS = float(os.getenv("HTTP_RETRY_SLEEP_SECONDS", "1"))
 RESOURCE_MONITOR_ENABLED = os.getenv("RESOURCE_MONITOR_ENABLED", "false").strip().lower() == "true"
 RESOURCE_MONITOR_FAIL_CLOSED = (
     os.getenv("RESOURCE_MONITOR_FAIL_CLOSED", "false").strip().lower() == "true"
@@ -74,6 +79,8 @@ RAW_FIELDS = [
     "benchmark_profile",
     "iteration",
     "fabric_enabled",
+    "fabric_client_mode",
+    "fabric_adapter_url",
     "revocation_mode",
     "did",
     "identity_vc_id",
@@ -152,6 +159,9 @@ def main() -> None:
 
     summary_path = summarize_csv(raw_path)
     resource_summary_path = None
+    if audit_mode_env() == "async":
+        flush_async_audit()
+
     if RESOURCE_MONITOR_ENABLED:
         print(f"Resource results: {resource_path}")
         if resource_path.exists():
@@ -288,10 +298,17 @@ def run_iteration(iteration: int) -> dict[str, Any]:
         row["capability_vc_bytes"] = json_size(capability_vc)
         row["capability_proof_bytes"] = json_size(capability_proof)
 
+        proof_refresh_total_ms = 0.0
         refreshed_identity_proof, refresh_ms = refresh_proof(identity_vc.get("id", ""))
         if refreshed_identity_proof is not None:
             identity_proof = refreshed_identity_proof
-            row["proof_refresh_ms"] = refresh_ms
+            proof_refresh_total_ms += refresh_ms
+        refreshed_capability_proof, refresh_ms = refresh_proof(capability_vc.get("id", ""))
+        if refreshed_capability_proof is not None:
+            capability_proof = refreshed_capability_proof
+            proof_refresh_total_ms += refresh_ms
+        if proof_refresh_total_ms:
+            row["proof_refresh_ms"] = round(proof_refresh_total_ms, 3)
 
         allow_payload = build_authorize_payload(
             identity_vc,
@@ -370,16 +387,19 @@ def run_iteration(iteration: int) -> dict[str, Any]:
         replacement_capability_proof = replacement_response["proof"]
         row["replacement_capability_vc_id"] = replacement_capability_vc.get("id", "")
 
+        proof_refresh_total_ms = 0.0
         refreshed_identity_proof, refresh_ms = refresh_proof(identity_vc.get("id", ""))
         if refreshed_identity_proof is not None:
             identity_proof = refreshed_identity_proof
-            row["proof_refresh_ms"] = refresh_ms
+            proof_refresh_total_ms += refresh_ms
         refreshed_replacement_proof, refresh_ms = refresh_proof(
             replacement_capability_vc.get("id", "")
         )
         if refreshed_replacement_proof is not None:
             replacement_capability_proof = refreshed_replacement_proof
-            row["proof_refresh_ms"] = refresh_ms
+            proof_refresh_total_ms += refresh_ms
+        if proof_refresh_total_ms:
+            row["proof_refresh_ms"] = round(proof_refresh_total_ms, 3)
 
         replacement_payload = build_authorize_payload(
             identity_vc,
@@ -415,13 +435,15 @@ def empty_row(iteration: int) -> dict[str, Any]:
     row["benchmark_profile"] = BENCHMARK_PROFILE
     row["iteration"] = iteration
     row["fabric_enabled"] = FABRIC_ENABLED
+    row["fabric_client_mode"] = FABRIC_CLIENT_MODE
+    row["fabric_adapter_url"] = FABRIC_ADAPTER_URL
     row["revocation_mode"] = REVOCATION_MODE
     row["error"] = ""
     return row
 
 
 def validate_benchmark_profile() -> None:
-    profiles = {"full", "no_audit", "status_only", "accumulator_hybrid"}
+    profiles = {"full", "no_audit", "async_audit", "status_only", "accumulator_hybrid"}
     if BENCHMARK_PROFILE not in profiles:
         raise SystemExit(
             f"BENCHMARK_PROFILE must be one of {', '.join(sorted(profiles))}"
@@ -430,11 +452,15 @@ def validate_benchmark_profile() -> None:
 
 def print_profile_warning() -> None:
     revocation_mode = REVOCATION_MODE.strip().lower()
-    audit_enabled = os.getenv("AUDIT_ENABLED", "true").strip().lower()
-    if BENCHMARK_PROFILE == "no_audit" and audit_enabled != "false":
+    if BENCHMARK_PROFILE == "no_audit" and audit_mode_env() != "disabled":
         print(
             "Benchmark profile warning: no_audit requires services started with "
-            "AUDIT_ENABLED=false to disable audit writes."
+            "AUDIT_MODE=disabled or AUDIT_ENABLED=false to disable audit writes."
+        )
+    if BENCHMARK_PROFILE == "async_audit" and audit_mode_env() != "async":
+        print(
+            "Benchmark profile warning: async_audit requires services started with "
+            "AUDIT_MODE=async."
         )
     if BENCHMARK_PROFILE == "status_only" and revocation_mode != "status":
         print(
@@ -449,6 +475,27 @@ def print_profile_warning() -> None:
             "Benchmark profile warning: accumulator_hybrid records metadata only; "
             "start services with REVOCATION_MODE=hybrid or accumulator."
         )
+
+
+def audit_mode_env() -> str:
+    if os.getenv("AUDIT_ENABLED", "true").strip().lower() == "false":
+        return "disabled"
+    mode = os.getenv("AUDIT_MODE", "sync").strip().lower()
+    if mode not in ("sync", "async", "disabled"):
+        return "sync"
+    return mode
+
+
+def flush_async_audit() -> None:
+    for service_name, base_url in (("issuer", ISSUER_URL), ("verifier", VERIFIER_URL)):
+        try:
+            response, _ = timed_post(f"{base_url}/audit/flush", {})
+            print(f"Audit flush {service_name}: {response.body}")
+        except Exception as exc:
+            message = f"audit flush {service_name} failed: {exc}"
+            if os.getenv("AUDIT_FAIL_CLOSED", "false").strip().lower() == "true":
+                raise RuntimeError(message) from exc
+            print(f"Audit flush warning: {message}")
 
 
 def issue_identity(subject_did: str, device_public_key_b64: str) -> tuple[dict[str, Any], float]:
@@ -544,14 +591,27 @@ def http_post_json(url: str, payload: dict[str, Any]) -> HttpResponse:
 
 
 def http_json(request: Request) -> HttpResponse:
-    try:
-        with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-            raw = response.read()
-    except HTTPError as exc:
-        raw = exc.read()
-        body = raw.decode("utf-8", errors="replace")
-        raise RuntimeError(f"request failed: {exc.code} {body}") from exc
-    return HttpResponse(json.loads(raw.decode("utf-8")), raw)
+    attempts = max(1, HTTP_RETRY_ATTEMPTS)
+    for attempt in range(1, attempts + 1):
+        try:
+            with urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+                raw = response.read()
+            return HttpResponse(json.loads(raw.decode("utf-8")), raw)
+        except HTTPError as exc:
+            raw = exc.read()
+            body = raw.decode("utf-8", errors="replace")
+            raise RuntimeError(f"request failed: {exc.code} {body}") from exc
+        except (ConnectionError, RemoteDisconnected, TimeoutError, URLError) as exc:
+            if attempt >= attempts:
+                raise RuntimeError(
+                    f"request failed after {attempts} attempts: {request.full_url}: {exc}"
+                ) from exc
+            print(
+                f"HTTP retry {attempt}/{attempts} for {request.full_url}: {exc}",
+                flush=True,
+            )
+            time.sleep(max(0.0, HTTP_RETRY_SLEEP_SECONDS))
+    raise RuntimeError(f"request failed after {attempts} attempts: {request.full_url}")
 
 
 def optional_get(url: str) -> HttpResponse | None:

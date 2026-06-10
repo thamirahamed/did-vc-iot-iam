@@ -261,6 +261,16 @@ def audit_events(limit: int = Query(50, ge=1)) -> dict:
     return {"events": audit.list_audit_events(limit)}
 
 
+@app.post("/audit/flush")
+def audit_flush() -> dict:
+    mode = audit_mode()
+    if mode != "async":
+        return {"flushed": True, "pending": 0, "mode": mode}
+    result = audit.flush_audit_queue(_float_env("AUDIT_FLUSH_TIMEOUT_SECONDS", 10.0))
+    result["mode"] = mode
+    return result
+
+
 def _extract_did_document_key(did_document: dict) -> Optional[str]:
     verification_methods = did_document.get("verificationMethod", [])
     if not verification_methods:
@@ -321,9 +331,25 @@ def _record_audit_event(
     reason: str = "",
     metadata: Optional[dict] = None,
 ) -> None:
-    if not audit_enabled():
+    mode = audit_mode()
+    if mode == "disabled":
         _print_audit_disabled_warning()
         return
+    if mode == "async":
+        event = audit.build_audit_event(
+            event_type=event_type,
+            subject_did=subject_did,
+            credential_id=credential_id,
+            decision=decision,
+            reason=reason,
+            metadata=metadata,
+        )
+        if not audit.enqueue_audit_event(event, fabric_client.write_audit_event):
+            if audit_fail_closed():
+                raise HTTPException(status_code=503, detail="audit queue full")
+            _append_audit_warning(response, "audit queue full")
+        return
+
     try:
         event = audit.write_audit_event(
             event_type=event_type,
@@ -358,6 +384,15 @@ def audit_enabled() -> bool:
     return os.getenv("AUDIT_ENABLED", "true").strip().lower() != "false"
 
 
+def audit_mode() -> str:
+    if not audit_enabled():
+        return "disabled"
+    mode = os.getenv("AUDIT_MODE", "sync").strip().lower()
+    if mode not in ("sync", "async", "disabled"):
+        return "sync"
+    return mode
+
+
 def _print_audit_disabled_warning() -> None:
     global _AUDIT_DISABLED_WARNING_PRINTED
     if _AUDIT_DISABLED_WARNING_PRINTED:
@@ -381,3 +416,11 @@ def _append_audit_warning(response: dict, warning: str) -> None:
     if "proof" in response:
         return
     response["audit_warning"] = warning
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value >= 0 else default

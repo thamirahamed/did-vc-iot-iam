@@ -366,9 +366,27 @@ def _enforce_capability(
 def _audit_authorization_response(
     payload: AuthorizeRequest, decision: str, reason: str
 ) -> AuthorizeResponse:
-    if not audit_enabled():
+    mode = audit_mode()
+    if mode == "disabled":
         _print_audit_disabled_warning()
         return AuthorizeResponse(decision=decision, reason=reason)
+    if mode == "async":
+        event = audit.build_audit_event(
+            event_type="AUTH_ALLOW" if decision == "allow" else "AUTH_DENY",
+            subject_did=_best_subject_did(payload),
+            credential_id=_best_capability_credential_id(payload),
+            decision=decision,
+            reason=reason,
+            metadata={
+                "requested_action": payload.requested_action,
+                "requested_resource": payload.requested_resource,
+            },
+        )
+        if not audit.enqueue_audit_event(event, fabric_client.write_audit_event):
+            if audit_fail_closed():
+                return AuthorizeResponse(decision="deny", reason="audit logging failed")
+        return AuthorizeResponse(decision=decision, reason=reason)
+
     try:
         event = audit.write_audit_event(
             event_type="AUTH_ALLOW" if decision == "allow" else "AUTH_DENY",
@@ -411,6 +429,15 @@ def audit_fail_closed() -> bool:
 
 def audit_enabled() -> bool:
     return os.getenv("AUDIT_ENABLED", "true").strip().lower() != "false"
+
+
+def audit_mode() -> str:
+    if not audit_enabled():
+        return "disabled"
+    mode = os.getenv("AUDIT_MODE", "sync").strip().lower()
+    if mode not in ("sync", "async", "disabled"):
+        return "sync"
+    return mode
 
 
 def _print_audit_disabled_warning() -> None:

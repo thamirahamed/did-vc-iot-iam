@@ -177,7 +177,7 @@ python scripts/fabric_smoke_test.py
 
 ### Fabric Docker Compose mode
 
-Use this mode when the issuer and verifier containers should talk to Fabric. The service images include the Docker CLI only; they use the host Docker socket to start short-lived `hyperledger/fabric-tools` peer CLI containers.
+Use this mode when the issuer and verifier containers should talk to Fabric. By default, this Compose path uses the long-running `fabric-adapter` service. The older peer CLI path is still available with `FABRIC_CLIENT_MODE=peer_cli`; in that mode the service images use the host Docker socket to start short-lived `hyperledger/fabric-tools` peer CLI containers.
 
 Set the Fabric samples organizations path in PowerShell:
 
@@ -203,6 +203,8 @@ docker compose -f docker-compose.yml -f docker-compose.fabric.yml config
 docker compose -f docker-compose.yml -f docker-compose.fabric.yml up -d --build
 docker compose -f docker-compose.yml -f docker-compose.fabric.yml logs issuer
 docker compose -f docker-compose.yml -f docker-compose.fabric.yml logs verifier
+curl.exe http://localhost:8010/health
+python scripts/fabric_adapter_smoke_test.py
 python scripts/integration_test.py
 ```
 
@@ -212,7 +214,36 @@ Expected integration test result:
 All integration tests passed
 ```
 
-Fabric Docker Compose mode sets `FABRIC_ENABLED=true`, `FABRIC_PEER_MODE=docker`, `FABRIC_DOCKER_USE_VOLUMES_FROM_SELF=true`, `FABRIC_CORE_PEER_TLS_ENABLED=true`, and `FABRIC_TLS_ENABLED=true`. The issuer and verifier mount Fabric crypto material at `/fabric/organizations`, and sibling peer CLI containers inherit that mount through Docker `--volumes-from`.
+Fabric Docker Compose mode sets `FABRIC_ENABLED=true`, `FABRIC_CLIENT_MODE=adapter`, `FABRIC_ADAPTER_URL=http://fabric-adapter:8010`, `FABRIC_PEER_MODE=docker`, `FABRIC_DOCKER_USE_VOLUMES_FROM_SELF=true`, `FABRIC_CORE_PEER_TLS_ENABLED=true`, and `FABRIC_TLS_ENABLED=true`. The issuer, verifier, and adapter mount Fabric crypto material at `/fabric/organizations`. The peer CLI variables remain configured so `FABRIC_CLIENT_MODE=peer_cli` can still be used for compatibility.
+
+### Fabric adapter mode
+
+The old Fabric client mode calls Fabric through `docker run hyperledger/fabric-tools` for each peer CLI query or invoke. That works, but each ledger operation pays Docker container startup overhead. Adapter mode moves those peer CLI calls into a long-running `fabric-adapter` container and issuer/verifier call it over HTTP:
+
+```text
+issuer/verifier -> fabric-adapter HTTP API -> peer chaincode query/invoke -> Fabric
+```
+
+The adapter does not use Fabric Gateway and does not change DID, VC, revocation, accumulator, or audit semantics. It only changes how peer CLI commands are reached. `docker-compose.fabric.yml` enables adapter mode by default; set `FABRIC_CLIENT_MODE=peer_cli` to use the previous Docker peer CLI mode.
+
+Run adapter mode from PowerShell after the Fabric test network and chaincode are running:
+
+```powershell
+$env:FABRIC_SAMPLES_ORGS_HOST_PATH="C:/Users/kebab/Documents/CodingProjects/fabric-samples/test-network/organizations"
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml up -d --build
+python scripts/fabric_adapter_smoke_test.py
+python scripts/integration_test.py
+```
+
+Run a short async-audit benchmark:
+
+```powershell
+$env:AUDIT_MODE="async"
+$env:BENCHMARK_PROFILE="async_audit"
+$env:BENCHMARK_RUNS="3"
+$env:BENCHMARK_WARMUP_RUNS="1"
+python scripts/benchmark_pipeline.py
+```
 
 ## Automated Testing
 
@@ -295,11 +326,79 @@ Benchmark profiles are metadata unless the services are started with matching en
 ```text
 BENCHMARK_PROFILE=full
 BENCHMARK_PROFILE=no_audit
+BENCHMARK_PROFILE=async_audit
 BENCHMARK_PROFILE=status_only
 BENCHMARK_PROFILE=accumulator_hybrid
 ```
 
 For `no_audit`, start services with `AUDIT_ENABLED=false`. This skips local audit JSONL writes and Fabric audit chaincode writes while keeping IAM operations unchanged. The default is `AUDIT_ENABLED=true`.
+
+## Audit Benchmark Modes
+
+Audit mode is controlled by `AUDIT_MODE`, defaulting to `sync`.
+
+- `sync`: default correctness mode. Local audit and Fabric audit writes complete before the response returns.
+- `async`: performance experiment mode. The response returns after the audit event is queued; a daemon worker writes local audit and Fabric audit in the background.
+- `disabled`: overhead isolation mode only. Audit writes are skipped. `AUDIT_ENABLED=false` is treated as disabled.
+
+Async audit queue environment:
+
+```text
+AUDIT_MODE=sync
+AUDIT_QUEUE_MAX_SIZE=1000
+AUDIT_FLUSH_TIMEOUT_SECONDS=10
+```
+
+Flush endpoints for tests and benchmarks:
+
+```text
+POST /audit/flush
+```
+
+Run Fabric benchmark with full sync audit:
+
+```powershell
+$env:FABRIC_SAMPLES_ORGS_HOST_PATH="C:/Users/kebab/Documents/CodingProjects/fabric-samples/test-network/organizations"
+$env:AUDIT_MODE="sync"
+$env:AUDIT_ENABLED="true"
+$env:BENCHMARK_PROFILE="full"
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml up -d --build
+python scripts/benchmark_pipeline.py
+```
+
+Run Fabric benchmark with async audit:
+
+```powershell
+$env:FABRIC_SAMPLES_ORGS_HOST_PATH="C:/Users/kebab/Documents/CodingProjects/fabric-samples/test-network/organizations"
+$env:AUDIT_MODE="async"
+$env:AUDIT_ENABLED="true"
+$env:BENCHMARK_PROFILE="async_audit"
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml up -d --build
+python scripts/benchmark_pipeline.py
+```
+
+Run Fabric benchmark with audit disabled:
+
+```powershell
+$env:FABRIC_SAMPLES_ORGS_HOST_PATH="C:/Users/kebab/Documents/CodingProjects/fabric-samples/test-network/organizations"
+$env:AUDIT_MODE="disabled"
+$env:AUDIT_ENABLED="false"
+$env:BENCHMARK_PROFILE="no_audit"
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml up -d --build
+python scripts/benchmark_pipeline.py
+```
+
+Compare audit modes:
+
+```powershell
+python scripts/compare_benchmarks.py results\summary_sync.csv results\summary_async.csv --left-label sync --right-label async
+```
+
+Print a command plan for all audit profile runs:
+
+```powershell
+python scripts/run_profile_benchmarks.py --label-prefix fabric --runs 3 --warmup 1 --fabric
+```
 
 ## Fabric Overhead Microbenchmarks
 

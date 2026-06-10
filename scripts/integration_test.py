@@ -456,6 +456,17 @@ def main() -> None:
     log(f"Deny bad signature response: {deny_signature}")
     assert deny_signature["decision"] == "deny", f"expected deny, got {deny_signature}"
 
+    if os.getenv("TEST_ASYNC_AUDIT", "false").strip().lower() == "true":
+        log("Flushing async audit queues")
+        issuer_flush = http_post_json(f"{ISSUER_BASE_URL}/audit/flush", {})
+        verifier_flush = http_post_json(f"{VERIFIER_BASE_URL}/audit/flush", {})
+        log(f"Issuer audit flush: {issuer_flush}")
+        log(f"Verifier audit flush: {verifier_flush}")
+        assert issuer_flush["flushed"] is True, f"issuer audit flush failed: {issuer_flush}"
+        assert verifier_flush["flushed"] is True, (
+            f"verifier audit flush failed: {verifier_flush}"
+        )
+
     log("Checking issuer audit events")
     issuer_audit = http_get_json(f"{ISSUER_BASE_URL}/audit/events?limit=100")
     assert_event_types(

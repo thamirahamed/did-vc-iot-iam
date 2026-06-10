@@ -29,6 +29,8 @@ RAW_FIELDS = [
     "iteration",
     "operation",
     "fabric_enabled",
+    "fabric_client_mode",
+    "fabric_adapter_url",
     "peer_mode",
     "duration_ms",
     "ok",
@@ -125,6 +127,8 @@ def measure_operation(
         "iteration": str(iteration),
         "operation": operation,
         "fabric_enabled": str(fabric_client.fabric_enabled()).lower(),
+        "fabric_client_mode": os.getenv("FABRIC_CLIENT_MODE", "peer_cli").strip().lower(),
+        "fabric_adapter_url": os.getenv("FABRIC_ADAPTER_URL", ""),
         "peer_mode": os.getenv("FABRIC_PEER_MODE", "local").strip().lower(),
         "duration_ms": f"{duration_ms:.3f}",
         "ok": str(ok).lower(),
@@ -137,7 +141,7 @@ class SyntheticContext:
         suffix = uuid.uuid4()
         self.did = f"did:iot:fabric-ops-{suffix}"
         self.credential_id = f"urn:uuid:fabric-ops-{suffix}"
-        self.accumulator_id = "default"
+        self.accumulator_id = f"fabric-ops-{suffix}"
         self.created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     def register_did(self) -> dict:

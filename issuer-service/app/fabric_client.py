@@ -2,6 +2,8 @@ import json
 import os
 import subprocess
 from typing import Any, Dict, List
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 
 def register_did(
@@ -88,6 +90,9 @@ def _invoke(function: str, args: List[str], timeout_seconds: float | None = None
     if not fabric_enabled():
         return {"enabled": False, "skipped": True}
 
+    if _client_mode() == "adapter":
+        return _adapter_call("invoke", function, args, timeout_seconds=timeout_seconds)
+
     validation = _validate_env(write=True)
     if validation:
         return validation
@@ -116,21 +121,24 @@ def _query_json(function: str, args: List[str]) -> dict:
     if not fabric_enabled():
         return {"enabled": False, "skipped": True}
 
-    validation = _validate_env(write=False)
-    if validation:
-        return validation
+    if _client_mode() == "adapter":
+        result = _adapter_call("query", function, args)
+    else:
+        validation = _validate_env(write=False)
+        if validation:
+            return validation
 
-    command = _base_peer_command() + [
-        "chaincode",
-        "query",
-        "-C",
-        _channel(),
-        "-n",
-        _chaincode(),
-        "-c",
-        _chaincode_payload(function, args),
-    ]
-    result = _run(command)
+        command = _base_peer_command() + [
+            "chaincode",
+            "query",
+            "-C",
+            _channel(),
+            "-n",
+            _chaincode(),
+            "-c",
+            _chaincode_payload(function, args),
+        ]
+        result = _run(command)
     if not result.get("ok"):
         return result
 
@@ -171,6 +179,66 @@ def _run(command: List[str], timeout_seconds: float | None = None) -> dict:
     if _peer_mode() == "docker":
         return _run_docker(command, timeout_seconds=timeout_seconds)
     return _run_local(command, timeout_seconds=timeout_seconds)
+
+
+def _adapter_call(
+    operation: str,
+    function: str,
+    args: List[str],
+    timeout_seconds: float | None = None,
+) -> dict:
+    timeout = timeout_seconds or _adapter_timeout()
+    url = f"{_adapter_url()}/chaincode/{operation}"
+    payload = json.dumps(
+        {"function": function, "args": args},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    request = Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        return {
+            "enabled": True,
+            "ok": False,
+            "error": f"Fabric adapter HTTP {exc.code}: {body}",
+            "client_mode": "adapter",
+            "adapter_url": _adapter_url(),
+        }
+    except (ConnectionError, TimeoutError, URLError) as exc:
+        return {
+            "enabled": True,
+            "ok": False,
+            "error": f"Fabric adapter request failed: {exc}",
+            "client_mode": "adapter",
+            "adapter_url": _adapter_url(),
+        }
+
+    try:
+        result = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return {
+            "enabled": True,
+            "ok": False,
+            "error": f"Fabric adapter returned invalid JSON: {exc}",
+            "stdout": raw.decode("utf-8", errors="replace"),
+            "client_mode": "adapter",
+            "adapter_url": _adapter_url(),
+        }
+
+    result["enabled"] = True
+    result["client_mode"] = "adapter"
+    result["adapter_url"] = _adapter_url()
+    if not result.get("ok") and not result.get("error"):
+        result["error"] = result.get("stderr", "").strip() or "Fabric adapter operation failed"
+    return result
 
 
 def _run_local(command: List[str], timeout_seconds: float | None = None) -> dict:
@@ -283,6 +351,15 @@ def _peer_mode() -> str:
     return os.getenv("FABRIC_PEER_MODE", "local").strip().lower()
 
 
+def _client_mode() -> str:
+    mode = os.getenv("FABRIC_CLIENT_MODE", "peer_cli").strip().lower()
+    return mode if mode in ("peer_cli", "adapter") else "peer_cli"
+
+
+def _adapter_url() -> str:
+    return os.getenv("FABRIC_ADAPTER_URL", "http://fabric-adapter:8010").rstrip("/")
+
+
 def _chaincode_payload(function: str, args: List[str]) -> str:
     return json.dumps({"Args": [function] + args})
 
@@ -350,6 +427,10 @@ def _csv_env(name: str, default: str) -> List[str]:
 
 def _fabric_cli_timeout() -> float:
     return _float_env("FABRIC_CLI_TIMEOUT_SECONDS", 20.0)
+
+
+def _adapter_timeout() -> float:
+    return _float_env("FABRIC_ADAPTER_TIMEOUT_SECONDS", 20.0)
 
 
 def _audit_write_timeout() -> float:
