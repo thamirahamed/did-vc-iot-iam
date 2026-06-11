@@ -277,13 +277,11 @@ def main() -> None:
         f"{VERIFIER_BASE_URL}/authorize", payload_revoked_capability
     )
     log(f"Deny revoked capability response: {deny_revoked_capability}")
-    assert deny_revoked_capability == {
-        "decision": "deny",
-        "reason": "capability credential revoked",
-    } or deny_revoked_capability == {
-        "decision": "deny",
-        "reason": "accumulator proof stale",
-    }, f"expected capability revocation deny, got {deny_revoked_capability}"
+    assert_revoked_deny(
+        deny_revoked_capability,
+        "capability credential revoked",
+        "capability revocation",
+    )
     log("Accumulator revoked credential deny checked")
 
     log("Requesting replacement capability VC from issuer")
@@ -352,13 +350,11 @@ def main() -> None:
         f"{VERIFIER_BASE_URL}/authorize", payload_revoked_identity
     )
     log(f"Deny revoked identity response: {deny_revoked_identity}")
-    assert deny_revoked_identity == {
-        "decision": "deny",
-        "reason": "identity credential revoked",
-    } or deny_revoked_identity == {
-        "decision": "deny",
-        "reason": "accumulator proof stale",
-    }, f"expected identity revocation deny, got {deny_revoked_identity}"
+    assert_revoked_deny(
+        deny_revoked_identity,
+        "identity credential revoked",
+        "identity revocation",
+    )
 
     log("Issuing fresh identity and capability VCs for remaining deny cases")
     fresh_subject = http_post_json(
@@ -540,6 +536,17 @@ def assert_event_types(audit_response: Dict[str, Any], expected: set[str]) -> No
     assert not missing, f"missing audit events {sorted(missing)}, got {events}"
 
 
+def assert_revoked_deny(response: Dict[str, Any], status_reason: str, label: str) -> None:
+    accumulator_reasons = {"accumulator proof stale", "accumulator proof invalid"}
+    if test_revocation_mode() == "accumulator":
+        expected_reasons = accumulator_reasons
+    else:
+        expected_reasons = accumulator_reasons | {status_reason}
+    assert response.get("decision") == "deny" and response.get("reason") in expected_reasons, (
+        f"expected {label} deny reason in {sorted(expected_reasons)}, got {response}"
+    )
+
+
 def issue_identity_with_proof(subject_did: str, device_public_key_b64: str) -> tuple[dict, dict | None]:
     if revocation_mode() == "status":
         vc = http_post_json(
@@ -594,10 +601,17 @@ def refresh_accumulator_proof(credential_id: str) -> dict | None:
 
 
 def revocation_mode() -> str:
-    mode = os.getenv("REVOCATION_MODE", "hybrid").strip().lower()
+    mode = test_revocation_mode()
     if mode not in ("status", "accumulator", "hybrid"):
         return "hybrid"
     return mode
+
+
+def test_revocation_mode() -> str:
+    return os.getenv(
+        "TEST_REVOCATION_MODE",
+        os.getenv("REVOCATION_MODE", "hybrid"),
+    ).strip().lower()
 
 
 def b64encode(value: bytes) -> str:

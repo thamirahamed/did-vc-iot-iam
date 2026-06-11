@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Tuple
 from urllib.request import urlopen
@@ -15,6 +16,8 @@ from .models import AuthorizeRequest, AuthorizeResponse
 from .revocation_client import check_revoked
 
 _AUDIT_DISABLED_WARNING_PRINTED = False
+_DID_CACHE: dict[str, tuple[Dict[str, Any], float]] = {}
+_ACCUMULATOR_STATE_CACHE: dict[str, tuple[Dict[str, Any], float]] = {}
 
 
 def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
@@ -51,7 +54,7 @@ def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
     if identity_subject.get("id") != capability_subject.get("id"):
         return _audit_authorization_response(payload, "deny", "subject DID mismatch")
 
-    did_document, reason = resolve_did(identity_subject["id"])
+    did_document, reason = _resolve_did_document(identity_subject["id"])
     if not did_document:
         return _audit_authorization_response(payload, "deny", reason)
 
@@ -79,11 +82,15 @@ def authorize_request(payload: AuthorizeRequest) -> AuthorizeResponse:
         return _audit_authorization_response(payload, "deny", reason)
 
     mode = revocation_mode()
+    # Accumulator mode is the performance path: the accumulator proof is the
+    # revocation evidence, so no issuer /vc/status or Fabric status read follows.
     if mode in ("accumulator", "hybrid"):
         ok, reason = _check_accumulator_proofs(payload, identity_vc, capability_vc)
         if not ok:
             return _audit_authorization_response(payload, "deny", reason)
 
+    # Hybrid mode intentionally keeps the original status checks as a safety
+    # baseline. Status mode uses only this path.
     if mode in ("status", "hybrid"):
         ok, reason = _check_credential_status(identity_vc, "identity")
         if not ok:
@@ -225,19 +232,21 @@ def _check_accumulator_proofs(
     if not identity_proof or not capability_proof:
         return False, "accumulator proof missing"
 
-    state, reason = _latest_accumulator_state()
+    proof_versions = []
+    for proof in (identity_proof, capability_proof):
+        try:
+            proof_versions.append(int(proof.get("version")))
+        except (TypeError, ValueError):
+            return False, "accumulator proof invalid"
+    state, reason = _latest_accumulator_state(min_version=max(proof_versions))
     if not state:
         return False, reason
 
     expected_root = state.get("root", "")
     expected_version = int(state.get("version", -1))
-    for proof in (identity_proof, capability_proof):
+    for proof_version, proof in zip(proof_versions, (identity_proof, capability_proof)):
         if proof.get("root") != expected_root:
             return False, "accumulator proof stale"
-        try:
-            proof_version = int(proof.get("version"))
-        except (TypeError, ValueError):
-            return False, "accumulator proof invalid"
         if proof_version != expected_version:
             return False, "accumulator proof stale"
 
@@ -248,9 +257,50 @@ def _check_accumulator_proofs(
     return True, ""
 
 
-def _latest_accumulator_state() -> Tuple[Dict[str, Any] | None, str]:
+def _resolve_did_document(did: str) -> Tuple[Dict[str, Any] | None, str]:
+    if not _bool_env("DID_CACHE_ENABLED", False):
+        return resolve_did(did)
+
+    now = time.monotonic()
+    ttl = _float_env("DID_CACHE_TTL_SECONDS", 30.0)
+    cached = _DID_CACHE.get(did)
+    if cached is not None and now - cached[1] <= ttl:
+        return cached[0], ""
+
+    did_document, reason = resolve_did(did)
+    if did_document:
+        _DID_CACHE[did] = (did_document, now)
+    else:
+        _DID_CACHE.pop(did, None)
+    return did_document, reason
+
+
+def _latest_accumulator_state(
+    accumulator_id: str = "default", min_version: int | None = None
+) -> Tuple[Dict[str, Any] | None, str]:
+    if _bool_env("ACCUMULATOR_STATE_CACHE_ENABLED", False):
+        now = time.monotonic()
+        ttl = _float_env("ACCUMULATOR_STATE_CACHE_TTL_SECONDS", 2.0)
+        cached = _ACCUMULATOR_STATE_CACHE.get(accumulator_id)
+        if cached is not None and now - cached[1] <= ttl:
+            try:
+                cached_version = int(cached[0].get("version", -1))
+            except (TypeError, ValueError):
+                cached_version = -1
+            if min_version is None or cached_version >= min_version:
+                return cached[0], ""
+
+    state, reason = _fetch_latest_accumulator_state(accumulator_id)
+    if state:
+        if _bool_env("ACCUMULATOR_STATE_CACHE_ENABLED", False):
+            _ACCUMULATOR_STATE_CACHE[accumulator_id] = (state, time.monotonic())
+        return state, ""
+    return None, reason
+
+
+def _fetch_latest_accumulator_state(accumulator_id: str) -> Tuple[Dict[str, Any] | None, str]:
     if fabric_client.fabric_enabled():
-        result = fabric_client.get_accumulator_state("default")
+        result = fabric_client.get_accumulator_state(accumulator_id)
         if not result.get("ok"):
             return None, "accumulator state unavailable"
         state = result.get("result")
@@ -453,6 +503,19 @@ def revocation_mode() -> str:
     if mode not in ("status", "accumulator", "hybrid"):
         return "status"
     return mode
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw_default = "true" if default else "false"
+    return os.getenv(name, raw_default).strip().lower() == "true"
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value >= 0 else default
 
 
 def _b64decode(value: str) -> bytes:

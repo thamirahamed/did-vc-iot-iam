@@ -16,25 +16,45 @@ def register_did(
 
 
 def register_credential_status(vc: Dict[str, Any]) -> dict:
-    subject = vc.get("credentialSubject", {})
-    credential_type = _credential_type(vc)
+    status = credential_status_record(vc)
     return _invoke(
         "RegisterCredentialStatus",
         [
-            vc.get("id", ""),
-            credential_type,
-            subject.get("id", ""),
-            vc.get("issuer", ""),
-            vc.get("issuanceDate", ""),
-            vc.get("expirationDate", ""),
+            status.get("credential_id", ""),
+            status.get("credential_type", ""),
+            status.get("subject_did", ""),
+            status.get("issuer", ""),
+            status.get("issued_at", ""),
+            status.get("expires_at", ""),
         ],
     )
+
+
+def register_credential_with_accumulator_state(
+    status_record: Dict[str, Any], accumulator_state: Dict[str, Any]
+) -> dict:
+    status_json = json.dumps(status_record, sort_keys=True, separators=(",", ":"))
+    state_json = json.dumps(accumulator_state, sort_keys=True, separators=(",", ":"))
+    return _invoke("RegisterCredentialWithAccumulatorState", [status_json, state_json])
 
 
 def revoke_credential_on_ledger(
     credential_id: str, reason: str | None, revoked_at: str
 ) -> dict:
     return _invoke("RevokeCredential", [credential_id, reason or "", revoked_at])
+
+
+def revoke_credential_with_accumulator_state(
+    credential_id: str,
+    reason: str | None,
+    revoked_at: str,
+    accumulator_state: Dict[str, Any],
+) -> dict:
+    state_json = json.dumps(accumulator_state, sort_keys=True, separators=(",", ":"))
+    return _invoke(
+        "RevokeCredentialWithAccumulatorState",
+        [credential_id, reason or "", revoked_at, state_json],
+    )
 
 
 def write_audit_event(event: dict) -> dict:
@@ -84,6 +104,22 @@ def _credential_type(vc: Dict[str, Any]) -> str:
     if isinstance(vc_type, str):
         return vc_type
     return ""
+
+
+def credential_status_record(vc: Dict[str, Any]) -> Dict[str, Any]:
+    subject = vc.get("credentialSubject", {})
+    return {
+        "docType": "CredentialStatus",
+        "credential_id": vc.get("id", ""),
+        "credential_type": _credential_type(vc),
+        "subject_did": subject.get("id", ""),
+        "issuer": vc.get("issuer", ""),
+        "issued_at": vc.get("issuanceDate", ""),
+        "expires_at": vc.get("expirationDate", ""),
+        "revoked": False,
+        "revoked_at": "",
+        "revocation_reason": "",
+    }
 
 
 def _invoke(function: str, args: List[str], timeout_seconds: float | None = None) -> dict:

@@ -130,11 +130,14 @@ def _issue_identity_vc(payload: IdentityIssueRequest) -> dict:
 
 
 def _post_issue_identity(vc: dict) -> Optional[dict]:
-    fabric_result = fabric_client.register_credential_status(vc)
+    subject_did = vc.get("credentialSubject", {}).get("id", "")
+    proof = _register_accumulator_credential(
+        vc, "identity", subject_did, write_state=False
+    )
+    accumulator_state = accumulator.get_state() if proof is not None else None
+    fabric_result = _register_credential_status_on_ledger(vc, accumulator_state)
     _handle_fabric_result(fabric_result)
     _append_fabric_warning(vc, fabric_result)
-    subject_did = vc.get("credentialSubject", {}).get("id", "")
-    proof = _register_accumulator_credential(vc, "identity", subject_did)
     _record_audit_event(
         vc,
         event_type="IDENTITY_VC_ISSUED",
@@ -170,11 +173,14 @@ def _issue_capability_vc(payload: CapabilityIssueRequest) -> dict:
 
 
 def _post_issue_capability(vc: dict) -> Optional[dict]:
-    fabric_result = fabric_client.register_credential_status(vc)
+    subject = vc.get("credentialSubject", {})
+    proof = _register_accumulator_credential(
+        vc, "capability", subject.get("id", ""), write_state=False
+    )
+    accumulator_state = accumulator.get_state() if proof is not None else None
+    fabric_result = _register_credential_status_on_ledger(vc, accumulator_state)
     _handle_fabric_result(fabric_result)
     _append_fabric_warning(vc, fabric_result)
-    subject = vc.get("credentialSubject", {})
-    proof = _register_accumulator_credential(vc, "capability", subject.get("id", ""))
     _record_audit_event(
         vc,
         event_type="CAPABILITY_VC_ISSUED",
@@ -191,20 +197,21 @@ def _post_issue_capability(vc: dict) -> Optional[dict]:
 @app.post("/vc/revoke")
 def revoke_vc_endpoint(payload: RevokeCredentialRequest) -> dict:
     record = revoke_credential(payload.credential_id, payload.reason)
-    fabric_result = fabric_client.revoke_credential_on_ledger(
-        payload.credential_id,
-        payload.reason,
-        record.get("revoked_at", ""),
-    )
-    _handle_fabric_result(fabric_result)
-    _append_fabric_warning(record, fabric_result)
+    accumulator_state = None
     if accumulator_enabled():
         try:
             accumulator_state = accumulator.revoke_credential(payload.credential_id)
             record["accumulator"] = _accumulator_response(accumulator_state)
-            _put_accumulator_state(accumulator_state)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    fabric_result = _revoke_credential_on_ledger(
+        payload.credential_id,
+        payload.reason,
+        record.get("revoked_at", ""),
+        accumulator_state,
+    )
+    _handle_fabric_result(fabric_result)
+    _append_fabric_warning(record, fabric_result)
     _record_audit_event(
         record,
         event_type="VC_REVOKED",
@@ -300,13 +307,78 @@ def _append_fabric_warning(response: dict, result: dict) -> None:
 
 
 def _register_accumulator_credential(
-    vc: dict, credential_type: str, subject_did: str
+    vc: dict, credential_type: str, subject_did: str, write_state: bool = True
 ) -> Optional[dict]:
     if not accumulator_enabled():
         return None
     proof = accumulator.register_credential(vc, credential_type, subject_did)
-    _put_accumulator_state(accumulator.get_state())
+    if write_state:
+        _put_accumulator_state(accumulator.get_state())
     return proof
+
+
+def _register_credential_status_on_ledger(
+    vc: dict, accumulator_state: Optional[dict]
+) -> dict:
+    if not accumulator_state or not fabric_client.fabric_enabled():
+        return fabric_client.register_credential_status(vc)
+
+    status_record = fabric_client.credential_status_record(vc)
+    combined_result = fabric_client.register_credential_with_accumulator_state(
+        status_record,
+        accumulator_state,
+    )
+    if combined_result.get("ok") or not combined_result.get("enabled"):
+        return combined_result
+
+    print(
+        "Fabric combined credential registration warning: "
+        f"{combined_result.get('error') or 'operation failed'}; falling back",
+        flush=True,
+    )
+    status_result = fabric_client.register_credential_status(vc)
+    if not status_result.get("ok"):
+        return status_result
+    accumulator_result = fabric_client.put_accumulator_state(accumulator_state)
+    if not accumulator_result.get("ok"):
+        return accumulator_result
+    return status_result
+
+
+def _revoke_credential_on_ledger(
+    credential_id: str,
+    reason: Optional[str],
+    revoked_at: str,
+    accumulator_state: Optional[dict],
+) -> dict:
+    if not accumulator_state or not fabric_client.fabric_enabled():
+        return fabric_client.revoke_credential_on_ledger(credential_id, reason, revoked_at)
+
+    combined_result = fabric_client.revoke_credential_with_accumulator_state(
+        credential_id,
+        reason,
+        revoked_at,
+        accumulator_state,
+    )
+    if combined_result.get("ok") or not combined_result.get("enabled"):
+        return combined_result
+
+    print(
+        "Fabric combined credential revocation warning: "
+        f"{combined_result.get('error') or 'operation failed'}; falling back",
+        flush=True,
+    )
+    revoke_result = fabric_client.revoke_credential_on_ledger(
+        credential_id,
+        reason,
+        revoked_at,
+    )
+    if not revoke_result.get("ok"):
+        return revoke_result
+    accumulator_result = fabric_client.put_accumulator_state(accumulator_state)
+    if not accumulator_result.get("ok"):
+        return accumulator_result
+    return revoke_result
 
 
 def _put_accumulator_state(state: dict) -> None:

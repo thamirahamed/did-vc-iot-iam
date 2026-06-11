@@ -92,6 +92,9 @@ def main() -> None:
 
 def run_operation_set(iteration: int) -> list[dict[str, str]]:
     context = SyntheticContext()
+    combined_register_context = SyntheticContext()
+    combined_revoke_context = SyntheticContext()
+    combined_revoke_context.register_credential_status()
     operations: list[tuple[str, Callable[[], dict[str, Any]]]] = [
         ("ping", lambda: fabric_client._query_json("Ping", [])),
         ("register_did", context.register_did),
@@ -101,6 +104,14 @@ def run_operation_set(iteration: int) -> list[dict[str, str]]:
         ("revoke_credential", context.revoke_credential),
         ("put_accumulator_state", context.put_accumulator_state),
         ("get_accumulator_state", context.get_accumulator_state),
+        (
+            "register_credential_with_accumulator_state",
+            combined_register_context.register_credential_with_accumulator_state,
+        ),
+        (
+            "revoke_credential_with_accumulator_state",
+            combined_revoke_context.revoke_credential_with_accumulator_state,
+        ),
         ("add_audit_event", context.add_audit_event),
         ("list_audit_events", context.list_audit_events),
     ]
@@ -173,6 +184,20 @@ class SyntheticContext:
 
     def get_accumulator_state(self) -> dict:
         return fabric_client.get_accumulator_state(self.accumulator_id)
+
+    def register_credential_with_accumulator_state(self) -> dict:
+        return fabric_client.register_credential_with_accumulator_state(
+            fabric_client.credential_status_record(self.synthetic_vc()),
+            self.synthetic_accumulator_state(),
+        )
+
+    def revoke_credential_with_accumulator_state(self) -> dict:
+        return fabric_client.revoke_credential_with_accumulator_state(
+            self.credential_id,
+            "fabric ops benchmark",
+            datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            self.synthetic_accumulator_state(),
+        )
 
     def add_audit_event(self) -> dict:
         return fabric_client.write_audit_event(

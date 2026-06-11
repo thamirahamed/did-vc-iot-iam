@@ -1,4 +1,22 @@
 services:
+  issuer:
+    environment:
+      REVOCATION_MODE: accumulator
+      AUDIT_MODE: async
+      AUDIT_ENABLED: "true"
+      FABRIC_CLIENT_MODE: adapter
+
+  verifier:
+    environment:
+      REVOCATION_MODE: accumulator
+      AUDIT_MODE: async
+      AUDIT_ENABLED: "true"
+      FABRIC_CLIENT_MODE: adapter
+      DID_CACHE_ENABLED: "true"
+      DID_CACHE_TTL_SECONDS: "30"
+      ACCUMULATOR_STATE_CACHE_ENABLED: "true"
+      ACCUMULATOR_STATE_CACHE_TTL_SECONDS: "2"
+
   device_agent:
     build: ./device-agent
     depends_on:

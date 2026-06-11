@@ -245,6 +245,50 @@ $env:BENCHMARK_WARMUP_RUNS="1"
 python scripts/benchmark_pipeline.py
 ```
 
+### Fabric performance mode
+
+Correctness mode uses hybrid revocation and synchronous audit by default:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml up -d --build
+python scripts/integration_test.py
+```
+
+Performance mode is isolated in `docker-compose.perf.yml` so normal Compose files do not need editing. It uses accumulator revocation, async audit, the long-running Fabric adapter client, and short verifier TTL caches. In `REVOCATION_MODE=accumulator`, the verifier treats the accumulator proof as the revocation evidence and skips issuer `/vc/status` plus Fabric credential status reads. Hybrid mode keeps the status lookup safety baseline.
+
+The IAM chaincode also provides combined write functions for accumulator-enabled Fabric mode:
+
+```text
+RegisterCredentialWithAccumulatorState
+RevokeCredentialWithAccumulatorState
+```
+
+These reduce Fabric invoke count by writing credential status metadata and compact accumulator state in one chaincode transaction. Existing `RegisterCredentialStatus`, `RevokeCredential`, and `PutAccumulatorState` remain available, and the issuer falls back to those older calls if a combined invoke is unavailable. Full VCs are still not stored on Fabric.
+
+Verifier cache settings are opt-in and configurable:
+
+```text
+DID_CACHE_ENABLED=true
+DID_CACHE_TTL_SECONDS=30
+ACCUMULATOR_STATE_CACHE_ENABLED=true
+ACCUMULATOR_STATE_CACHE_TTL_SECONDS=2
+```
+
+Run Fabric performance mode from PowerShell:
+
+```powershell
+$env:FABRIC_SAMPLES_ORGS_HOST_PATH="C:/Users/kebab/Documents/CodingProjects/fabric-samples/test-network/organizations"
+
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml -f docker-compose.perf.yml up -d --build
+
+$env:BENCHMARK_PROFILE="fabric_accumulator_perf"
+$env:BENCHMARK_RUNS="3"
+$env:BENCHMARK_WARMUP_RUNS="1"
+$env:BENCHMARK_LABEL="fabric-accumulator-perf"
+
+python scripts/benchmark_pipeline.py
+```
+
 ## Automated Testing
 
 Generate issuer keys and create `.env.dev`:
@@ -329,6 +373,7 @@ BENCHMARK_PROFILE=no_audit
 BENCHMARK_PROFILE=async_audit
 BENCHMARK_PROFILE=status_only
 BENCHMARK_PROFILE=accumulator_hybrid
+BENCHMARK_PROFILE=fabric_accumulator_perf
 ```
 
 For `no_audit`, start services with `AUDIT_ENABLED=false`. This skips local audit JSONL writes and Fabric audit chaincode writes while keeping IAM operations unchanged. The default is `AUDIT_ENABLED=true`.

@@ -443,7 +443,14 @@ def empty_row(iteration: int) -> dict[str, Any]:
 
 
 def validate_benchmark_profile() -> None:
-    profiles = {"full", "no_audit", "async_audit", "status_only", "accumulator_hybrid"}
+    profiles = {
+        "full",
+        "no_audit",
+        "async_audit",
+        "status_only",
+        "accumulator_hybrid",
+        "fabric_accumulator_perf",
+    }
     if BENCHMARK_PROFILE not in profiles:
         raise SystemExit(
             f"BENCHMARK_PROFILE must be one of {', '.join(sorted(profiles))}"
@@ -475,6 +482,22 @@ def print_profile_warning() -> None:
             "Benchmark profile warning: accumulator_hybrid records metadata only; "
             "start services with REVOCATION_MODE=hybrid or accumulator."
         )
+    if BENCHMARK_PROFILE == "fabric_accumulator_perf":
+        if revocation_mode != "accumulator":
+            print(
+                "Benchmark profile warning: fabric_accumulator_perf expects "
+                "services started with REVOCATION_MODE=accumulator."
+            )
+        if audit_mode_env() != "async":
+            print(
+                "Benchmark profile warning: fabric_accumulator_perf expects "
+                "services started with AUDIT_MODE=async."
+            )
+        if FABRIC_CLIENT_MODE.strip().lower() != "adapter":
+            print(
+                "Benchmark profile warning: fabric_accumulator_perf expects "
+                "services started with FABRIC_CLIENT_MODE=adapter."
+            )
 
 
 def audit_mode_env() -> str:
@@ -626,6 +649,15 @@ def optional_get(url: str) -> HttpResponse | None:
 def expect_decision(response: dict[str, Any], decision: str, label: str) -> None:
     if response.get("decision") != decision:
         raise RuntimeError(f"expected {decision} for {label}, got {response}")
+    if (
+        BENCHMARK_PROFILE == "fabric_accumulator_perf"
+        and label == "revoked or stale authorization"
+        and response.get("reason") not in (
+            "accumulator proof stale",
+            "accumulator proof invalid",
+        )
+    ):
+        raise RuntimeError(f"expected accumulator revoked denial reason, got {response}")
 
 
 def json_size(value: Any) -> int:

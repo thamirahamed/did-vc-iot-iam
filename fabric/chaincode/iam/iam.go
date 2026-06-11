@@ -112,15 +112,6 @@ func (s *SmartContract) DIDExists(ctx contractapi.TransactionContextInterface, d
 }
 
 func (s *SmartContract) RegisterCredentialStatus(ctx contractapi.TransactionContextInterface, credentialID string, credentialType string, subjectDID string, issuer string, issuedAt string, expiresAt string) error {
-	key := credentialKey(credentialID)
-	existing, err := ctx.GetStub().GetState(key)
-	if err != nil {
-		return fmt.Errorf("failed to check credential status: %w", err)
-	}
-	if existing != nil {
-		return fmt.Errorf("credential status already exists: %s", credentialID)
-	}
-
 	status := CredentialStatus{
 		DocType:          "CredentialStatus",
 		CredentialID:     credentialID,
@@ -133,11 +124,21 @@ func (s *SmartContract) RegisterCredentialStatus(ctx contractapi.TransactionCont
 		RevokedAt:        "",
 		RevocationReason: "",
 	}
-	bytes, err := json.Marshal(status)
-	if err != nil {
-		return fmt.Errorf("failed to marshal credential status: %w", err)
+	return s.putNewCredentialStatus(ctx, &status)
+}
+
+func (s *SmartContract) RegisterCredentialWithAccumulatorState(ctx contractapi.TransactionContextInterface, credentialStatusJson string, accumulatorStateJson string) error {
+	var status CredentialStatus
+	if err := json.Unmarshal([]byte(credentialStatusJson), &status); err != nil {
+		return fmt.Errorf("failed to unmarshal credential status: %w", err)
 	}
-	return ctx.GetStub().PutState(key, bytes)
+	status.Revoked = false
+	status.RevokedAt = ""
+	status.RevocationReason = ""
+	if err := s.putNewCredentialStatus(ctx, &status); err != nil {
+		return err
+	}
+	return s.PutAccumulatorState(ctx, accumulatorStateJson)
 }
 
 func (s *SmartContract) GetCredentialStatus(ctx contractapi.TransactionContextInterface, credentialID string) (*CredentialStatus, error) {
@@ -168,12 +169,14 @@ func (s *SmartContract) RevokeCredential(ctx contractapi.TransactionContextInter
 	status.Revoked = true
 	status.RevokedAt = revokedAt
 	status.RevocationReason = reason
+	return s.putCredentialStatus(ctx, status)
+}
 
-	bytes, err := json.Marshal(status)
-	if err != nil {
-		return fmt.Errorf("failed to marshal credential status: %w", err)
+func (s *SmartContract) RevokeCredentialWithAccumulatorState(ctx contractapi.TransactionContextInterface, credentialID string, reason string, revokedAt string, accumulatorStateJson string) error {
+	if err := s.RevokeCredential(ctx, credentialID, reason, revokedAt); err != nil {
+		return err
 	}
-	return ctx.GetStub().PutState(credentialKey(credentialID), bytes)
+	return s.PutAccumulatorState(ctx, accumulatorStateJson)
 }
 
 func (s *SmartContract) IsCredentialRevoked(ctx contractapi.TransactionContextInterface, credentialID string) (bool, error) {
@@ -318,6 +321,46 @@ func (s *SmartContract) PutAccumulatorState(ctx contractapi.TransactionContextIn
 		return fmt.Errorf("failed to marshal accumulator state: %w", err)
 	}
 	return ctx.GetStub().PutState(accumulatorStateKey(state.AccumulatorID, state.Version), bytes)
+}
+
+func (s *SmartContract) putNewCredentialStatus(ctx contractapi.TransactionContextInterface, status *CredentialStatus) error {
+	if status.CredentialID == "" {
+		return fmt.Errorf("credential_id is required")
+	}
+	if status.CredentialType == "" {
+		return fmt.Errorf("credential_type is required")
+	}
+	if status.SubjectDID == "" {
+		return fmt.Errorf("subject_did is required")
+	}
+	if status.Issuer == "" {
+		return fmt.Errorf("issuer is required")
+	}
+	if status.IssuedAt == "" {
+		return fmt.Errorf("issued_at is required")
+	}
+	if status.ExpiresAt == "" {
+		return fmt.Errorf("expires_at is required")
+	}
+
+	key := credentialKey(status.CredentialID)
+	existing, err := ctx.GetStub().GetState(key)
+	if err != nil {
+		return fmt.Errorf("failed to check credential status: %w", err)
+	}
+	if existing != nil {
+		return fmt.Errorf("credential status already exists: %s", status.CredentialID)
+	}
+	return s.putCredentialStatus(ctx, status)
+}
+
+func (s *SmartContract) putCredentialStatus(ctx contractapi.TransactionContextInterface, status *CredentialStatus) error {
+	status.DocType = "CredentialStatus"
+	bytes, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("failed to marshal credential status: %w", err)
+	}
+	return ctx.GetStub().PutState(credentialKey(status.CredentialID), bytes)
 }
 
 func (s *SmartContract) GetAccumulatorState(ctx contractapi.TransactionContextInterface, accumulatorID string) (*AccumulatorStateRecord, error) {
