@@ -300,6 +300,10 @@ def run_iteration(iteration: int) -> dict[str, Any]:
 
         proof_refresh_total_ms = 0.0
         refreshed_identity_proof, refresh_ms = refresh_proof(identity_vc.get("id", ""))
+        if refreshed_identity_proof is None and accumulator_proofs_required():
+            raise RuntimeError(
+                "failed to refresh identity accumulator proof after capability issuance"
+            )
         if refreshed_identity_proof is not None:
             identity_proof = refreshed_identity_proof
             proof_refresh_total_ms += refresh_ms
@@ -389,6 +393,10 @@ def run_iteration(iteration: int) -> dict[str, Any]:
 
         proof_refresh_total_ms = 0.0
         refreshed_identity_proof, refresh_ms = refresh_proof(identity_vc.get("id", ""))
+        if refreshed_identity_proof is None and accumulator_proofs_required():
+            raise RuntimeError(
+                "failed to refresh identity accumulator proof after replacement capability issuance"
+            )
         if refreshed_identity_proof is not None:
             identity_proof = refreshed_identity_proof
             proof_refresh_total_ms += refresh_ms
@@ -507,6 +515,13 @@ def audit_mode_env() -> str:
     if mode not in ("sync", "async", "disabled"):
         return "sync"
     return mode
+
+
+def accumulator_proofs_required() -> bool:
+    return (
+        BENCHMARK_PROFILE == "fabric_accumulator_perf"
+        or REVOCATION_MODE.strip().lower() == "accumulator"
+    )
 
 
 def flush_async_audit() -> None:

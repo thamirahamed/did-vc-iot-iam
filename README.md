@@ -303,6 +303,60 @@ Run integration tests:
 
 python scripts/integration_test.py
 
+## Validation tooling
+
+Use these helper scripts for repeatable environment checks, cleanup previews, and validation runs.
+
+Check environment:
+
+```powershell
+python scripts/check_environment.py
+```
+
+Clean generated files dry run:
+
+```powershell
+python scripts/reset_runtime_data.py
+```
+
+Clean generated files apply:
+
+```powershell
+python scripts/reset_runtime_data.py --apply
+```
+
+Run local validation:
+
+```powershell
+python scripts/run_all_tests.py --mode local
+```
+
+Run Fabric validation:
+
+```powershell
+$env:FABRIC_SAMPLES_ORGS_HOST_PATH="C:/Users/kebab/Documents/CodingProjects/fabric-samples/test-network/organizations"
+python scripts/run_all_tests.py --mode fabric
+```
+
+Run performance smoke:
+
+```powershell
+$env:FABRIC_SAMPLES_ORGS_HOST_PATH="C:/Users/kebab/Documents/CodingProjects/fabric-samples/test-network/organizations"
+python scripts/run_all_tests.py --mode perf
+```
+
+Run full validation:
+
+```powershell
+python scripts/run_all_tests.py --mode all
+```
+
+Run full validation with chaincode redeploy:
+
+```powershell
+python scripts/run_all_tests.py --mode all --redeploy-chaincode
+```
+
 ## Performance emulation
 
 This simulates constrained CPU and memory at the application layer. It does not model microcontroller firmware, radio behavior, or physical hardware.

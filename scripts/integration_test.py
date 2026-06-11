@@ -113,7 +113,10 @@ def main() -> None:
         "read",
         "iot:device:example",
     )
-    identity_accumulator_proof = refresh_accumulator_proof(identity_vc["id"])
+    identity_accumulator_proof = refresh_required_active_proof(
+        identity_vc["id"],
+        "identity proof after capability issuance",
+    )
     cap_id = capability_vc.get("id", "unknown")
     log(f"Capability VC issued, id: {cap_id}")
 
@@ -290,7 +293,10 @@ def main() -> None:
         "read",
         "iot:device:example",
     )
-    identity_accumulator_proof = refresh_accumulator_proof(identity_vc["id"])
+    identity_accumulator_proof = refresh_required_active_proof(
+        identity_vc["id"],
+        "identity proof after replacement capability issuance",
+    )
     log(f"Replacement capability VC issued, id: {capability_vc.get('id', 'unknown')}")
 
     if revocation_mode() in ("accumulator", "hybrid"):
@@ -371,7 +377,10 @@ def main() -> None:
         "read",
         "iot:device:example",
     )
-    identity_accumulator_proof = refresh_accumulator_proof(identity_vc["id"])
+    identity_accumulator_proof = refresh_required_active_proof(
+        identity_vc["id"],
+        "fresh identity proof after capability issuance",
+    )
     payload = build_authorize_payload(
         identity_vc,
         capability_vc,
@@ -598,6 +607,13 @@ def refresh_accumulator_proof(credential_id: str) -> dict | None:
         f"{ISSUER_BASE_URL}/revocation/accumulator/refresh-proof",
         {"credential_id": credential_id},
     )
+
+
+def refresh_required_active_proof(credential_id: str, label: str) -> dict | None:
+    proof = refresh_accumulator_proof(credential_id)
+    if revocation_mode() == "accumulator" and proof is None:
+        raise RuntimeError(f"failed to refresh {label}")
+    return proof
 
 
 def revocation_mode() -> str:

@@ -200,6 +200,7 @@ def revoke_vc_endpoint(payload: RevokeCredentialRequest) -> dict:
     accumulator_state = None
     if accumulator_enabled():
         try:
+            _sync_accumulator_version_from_ledger()
             accumulator_state = accumulator.revoke_credential(payload.credential_id)
             record["accumulator"] = _accumulator_response(accumulator_state)
         except Exception as exc:
@@ -311,6 +312,7 @@ def _register_accumulator_credential(
 ) -> Optional[dict]:
     if not accumulator_enabled():
         return None
+    _sync_accumulator_version_from_ledger()
     proof = accumulator.register_credential(vc, credential_type, subject_did)
     if write_state:
         _put_accumulator_state(accumulator.get_state())
@@ -384,6 +386,22 @@ def _revoke_credential_on_ledger(
 def _put_accumulator_state(state: dict) -> None:
     result = fabric_client.put_accumulator_state(state)
     _handle_fabric_result(result)
+
+
+def _sync_accumulator_version_from_ledger() -> None:
+    if not fabric_client.fabric_enabled():
+        return
+    result = fabric_client.get_accumulator_state(accumulator.ACCUMULATOR_ID)
+    if not result.get("ok"):
+        return
+    state = result.get("result")
+    if not isinstance(state, dict):
+        return
+    try:
+        ledger_version = int(state.get("version", 0))
+    except (TypeError, ValueError):
+        return
+    accumulator.ensure_min_version(ledger_version)
 
 
 def _accumulator_response(state: dict) -> dict:

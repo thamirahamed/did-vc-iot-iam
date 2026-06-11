@@ -57,6 +57,13 @@ def http_get_json(url: str) -> Dict[str, Any]:
     return json.loads(body)
 
 
+def refresh_accumulator_proof(issuer_url: str, credential_id: str) -> Dict[str, Any]:
+    return http_post_json(
+        f"{issuer_url}/revocation/accumulator/refresh-proof",
+        {"credential_id": credential_id},
+    )
+
+
 def wait_for_service(url: str, timeout_s: float = 30.0, interval_s: float = 0.5) -> None:
     deadline = time.time() + timeout_s
     last_error = None
@@ -143,9 +150,9 @@ def prepare_credentials(
             )
             capability_vc = capability_response["vc"]
             capability_accumulator_proof = capability_response.get("accumulator_proof")
-            identity_accumulator_proof = http_post_json(
-                f"{issuer_url}/revocation/accumulator/refresh-proof",
-                {"credential_id": identity_vc["id"]},
+            identity_accumulator_proof = refresh_accumulator_proof(
+                issuer_url,
+                identity_vc["id"],
             )
         else:
             identity_vc = http_post_json(
@@ -402,9 +409,9 @@ def run_demo(
         )
         capability_vc = capability_response["vc"]
         capability_accumulator_proof = capability_response.get("accumulator_proof")
-        identity_accumulator_proof = http_post_json(
-            f"{issuer_url}/revocation/accumulator/refresh-proof",
-            {"credential_id": identity_vc["id"]},
+        identity_accumulator_proof = refresh_accumulator_proof(
+            issuer_url,
+            identity_vc["id"],
         )
     else:
         capability_vc = http_post_json(

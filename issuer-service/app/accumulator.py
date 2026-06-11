@@ -71,6 +71,15 @@ def refresh_proof(credential_id: str) -> dict:
     return get_proof(credential_id)
 
 
+def ensure_min_version(min_version: int) -> None:
+    store = _load_store()
+    _update_state(store)
+    if int(store["state"].get("version", 0)) < min_version:
+        store["state"]["version"] = min_version
+        store["state"]["updated_at"] = _utc_now()
+        _save_store(store)
+
+
 def verify_proof(vc: dict, proof: dict, expected_root: str) -> bool:
     if not isinstance(proof, dict):
         return False

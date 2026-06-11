@@ -273,6 +273,8 @@ def main() -> None:
         "read",
         "iot:device:example",
     )
+    if accumulator_enabled():
+        log("Issuing the Capability VC updates the accumulator root, so the Identity proof is refreshed.")
     identity_accumulator_proof = refresh_proof(identity_vc["id"])
     capability_subject = capability_vc.get("credentialSubject", {})
     capability_issuance = capability_vc.get("issuanceDate", "unknown")
