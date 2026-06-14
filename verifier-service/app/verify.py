@@ -238,7 +238,10 @@ def _check_accumulator_proofs(
             proof_versions.append(int(proof.get("version")))
         except (TypeError, ValueError):
             return False, "accumulator proof invalid"
-    state, reason = _latest_accumulator_state(min_version=max(proof_versions))
+    state, reason = _latest_accumulator_state(
+        min_version=max(proof_versions),
+        force_fresh=payload.force_fresh_accumulator,
+    )
     if not state:
         return False, reason
 
@@ -246,8 +249,10 @@ def _check_accumulator_proofs(
     expected_version = int(state.get("version", -1))
     for proof_version, proof in zip(proof_versions, (identity_proof, capability_proof)):
         if proof.get("root") != expected_root:
+            _log_stale_accumulator_details(identity_proof, capability_proof, expected_version, expected_root)
             return False, "accumulator proof stale"
         if proof_version != expected_version:
+            _log_stale_accumulator_details(identity_proof, capability_proof, expected_version, expected_root)
             return False, "accumulator proof stale"
 
     if not accumulator.verify_proof(identity_vc, identity_proof, expected_root):
@@ -255,6 +260,23 @@ def _check_accumulator_proofs(
     if not accumulator.verify_proof(capability_vc, capability_proof, expected_root):
         return False, "accumulator proof invalid"
     return True, ""
+
+
+def _log_stale_accumulator_details(
+    identity_proof: Dict[str, Any],
+    capability_proof: Dict[str, Any],
+    latest_version: int,
+    latest_root: str,
+) -> None:
+    details = {
+        "submitted_identity_version": identity_proof.get("version"),
+        "submitted_capability_version": capability_proof.get("version"),
+        "latest_version": latest_version,
+        "submitted_identity_root_prefix": str(identity_proof.get("root") or "")[:12],
+        "submitted_capability_root_prefix": str(capability_proof.get("root") or "")[:12],
+        "latest_root_prefix": str(latest_root or "")[:12],
+    }
+    print(f"accumulator proof stale: {json.dumps(details, sort_keys=True)}", flush=True)
 
 
 def _resolve_did_document(did: str) -> Tuple[Dict[str, Any] | None, str]:
@@ -276,9 +298,11 @@ def _resolve_did_document(did: str) -> Tuple[Dict[str, Any] | None, str]:
 
 
 def _latest_accumulator_state(
-    accumulator_id: str = "default", min_version: int | None = None
+    accumulator_id: str = "default",
+    min_version: int | None = None,
+    force_fresh: bool = False,
 ) -> Tuple[Dict[str, Any] | None, str]:
-    if _bool_env("ACCUMULATOR_STATE_CACHE_ENABLED", False):
+    if _bool_env("ACCUMULATOR_STATE_CACHE_ENABLED", False) and not force_fresh:
         now = time.monotonic()
         ttl = _float_env("ACCUMULATOR_STATE_CACHE_TTL_SECONDS", 2.0)
         cached = _ACCUMULATOR_STATE_CACHE.get(accumulator_id)

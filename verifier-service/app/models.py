@@ -14,6 +14,7 @@ class AuthorizeRequest(BaseModel):
     device_signature: str
     requested_action: str
     requested_resource: str
+    force_fresh_accumulator: bool = False
 
 
 class AuthorizeResponse(BaseModel):

@@ -1,7 +1,10 @@
 .env*
 !.env.fabric.example
+!.env.project.example
 .env.dev
 .env.fabric
+.env.project
+.env.local
 fabric/.fabric-env
 fabric/chaincode/iam/vendor/
 **/vendor/
@@ -11,6 +14,12 @@ results/
 *.csv
 data/
 data/audit/
+data/dashboard/*.db
+data/dashboard/*.db-journal
+data/dashboard/*.db-wal
+data/dashboard/*.db-shm
+data/dashboard/devices.json
+data/dashboard/devices.json.bak
 data/did_registry.json
 data/revocation_registry.json
 *.jsonl
@@ -19,3 +28,5 @@ __pycache__/
 *.py[cod]
 *$py.class
 fabric/chaincode/iam/iam
+dashboard-ui/node_modules/
+dashboard-ui/dist/

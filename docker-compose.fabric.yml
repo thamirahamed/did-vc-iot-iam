@@ -1,11 +1,13 @@
 services:
   fabric-adapter:
     build: ./fabric-adapter
+    env_file:
+      - .env.project
     ports:
       - "8010:8010"
     environment:
-      FABRIC_CHANNEL_NAME: mychannel
-      FABRIC_CHAINCODE_NAME: iam
+      FABRIC_CHANNEL_NAME: ${FABRIC_CHANNEL_NAME:-mychannel}
+      FABRIC_CHAINCODE_NAME: ${FABRIC_CHAINCODE_NAME:-iam}
       FABRIC_CORE_PEER_TLS_ENABLED: "true"
       CORE_PEER_TLS_ENABLED: "true"
       FABRIC_TLS_ENABLED: "true"
@@ -30,18 +32,20 @@ services:
   issuer:
     depends_on:
       - fabric-adapter
+    env_file:
+      - .env.project
     environment:
       FABRIC_ENABLED: "true"
-      FABRIC_CLIENT_MODE: adapter
-      FABRIC_ADAPTER_URL: http://fabric-adapter:8010
+      FABRIC_CLIENT_MODE: ${FABRIC_CLIENT_MODE:-adapter}
+      FABRIC_ADAPTER_URL: ${FABRIC_ADAPTER_URL:-http://fabric-adapter:8010}
       FABRIC_PEER_MODE: docker
-      FABRIC_CHANNEL_NAME: mychannel
-      FABRIC_CHAINCODE_NAME: iam
-      FABRIC_DOCKER_NETWORK: fabric_test
+      FABRIC_CHANNEL_NAME: ${FABRIC_CHANNEL_NAME:-mychannel}
+      FABRIC_CHAINCODE_NAME: ${FABRIC_CHAINCODE_NAME:-iam}
+      FABRIC_DOCKER_NETWORK: ${FABRIC_DOCKER_NETWORK:-fabric_test}
       FABRIC_CORE_PEER_TLS_ENABLED: "true"
       FABRIC_TLS_ENABLED: "true"
       FABRIC_FAIL_CLOSED: "true"
-      REVOCATION_MODE: "hybrid"
+      REVOCATION_MODE: ${REVOCATION_MODE:-hybrid}
       ACCUMULATOR_STORE_PATH: /app/data/accumulator/issuer_accumulator.json
       AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
       AUDIT_MODE: ${AUDIT_MODE:-sync}
@@ -73,19 +77,21 @@ services:
     depends_on:
       - issuer
       - fabric-adapter
+    env_file:
+      - .env.project
     environment:
       ISSUER_URL: http://issuer:8000
       FABRIC_ENABLED: "true"
-      FABRIC_CLIENT_MODE: adapter
-      FABRIC_ADAPTER_URL: http://fabric-adapter:8010
+      FABRIC_CLIENT_MODE: ${FABRIC_CLIENT_MODE:-adapter}
+      FABRIC_ADAPTER_URL: ${FABRIC_ADAPTER_URL:-http://fabric-adapter:8010}
       FABRIC_PEER_MODE: docker
-      FABRIC_CHANNEL_NAME: mychannel
-      FABRIC_CHAINCODE_NAME: iam
-      FABRIC_DOCKER_NETWORK: fabric_test
+      FABRIC_CHANNEL_NAME: ${FABRIC_CHANNEL_NAME:-mychannel}
+      FABRIC_CHAINCODE_NAME: ${FABRIC_CHAINCODE_NAME:-iam}
+      FABRIC_DOCKER_NETWORK: ${FABRIC_DOCKER_NETWORK:-fabric_test}
       FABRIC_CORE_PEER_TLS_ENABLED: "true"
       FABRIC_TLS_ENABLED: "true"
       FABRIC_FAIL_CLOSED: "true"
-      REVOCATION_MODE: "hybrid"
+      REVOCATION_MODE: ${REVOCATION_MODE:-hybrid}
       AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
       AUDIT_MODE: ${AUDIT_MODE:-sync}
       AUDIT_QUEUE_MAX_SIZE: ${AUDIT_QUEUE_MAX_SIZE:-1000}

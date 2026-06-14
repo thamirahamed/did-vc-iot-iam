@@ -1,0 +1,20 @@
+services:
+  dashboard-ui:
+    build:
+      context: ./dashboard-ui
+    working_dir: /app
+    command: npm run dev -- --host 0.0.0.0
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./dashboard-ui:/app
+      - /app/node_modules
+    environment:
+      VITE_DASHBOARD_API_URL: http://localhost:8020
+      VITE_ISSUER_URL: http://localhost:8000
+      VITE_VERIFIER_URL: http://localhost:8001
+      VITE_FABRIC_ADAPTER_URL: http://localhost:8010
+      DASHBOARD_API_PROXY_TARGET: http://host.docker.internal:8020
+      ISSUER_PROXY_TARGET: http://host.docker.internal:8000
+      VERIFIER_PROXY_TARGET: http://host.docker.internal:8001
+      FABRIC_ADAPTER_PROXY_TARGET: http://host.docker.internal:8010

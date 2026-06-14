@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 from datetime import datetime
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -60,6 +61,19 @@ def get_state() -> dict:
     _update_state(store)
     _save_store(store)
     return dict(store["state"])
+
+
+def reset_to_empty() -> dict:
+    store = {
+        "state": _empty_state(),
+        "records": {},
+    }
+    _save_store(store)
+    return dict(store["state"])
+
+
+def empty_state() -> dict:
+    return dict(_empty_state())
 
 
 def get_proof(credential_id: str) -> dict:
@@ -146,6 +160,7 @@ def _build_proof(store: dict, credential_id: str) -> dict:
         "accumulator_id": ACCUMULATOR_ID,
         "version": state["version"],
         "root": state["root"],
+        "credential_id": record["credential_id"],
         "credential_hash": record["credential_hash"],
         "revocation_index": record["revocation_index"],
         "proof": proof_path,
@@ -164,8 +179,16 @@ def _load_store() -> dict:
         _update_state(store)
         return store
 
-    with path.open("r", encoding="utf-8") as handle:
-        data = json.load(handle)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except JSONDecodeError:
+        store = {
+            "state": _empty_state(),
+            "records": {},
+        }
+        _save_store(store)
+        return store
     if not isinstance(data, dict):
         data = {}
     data.setdefault("state", _empty_state())
@@ -187,8 +210,15 @@ def _update_state(store: dict) -> None:
     old_root = old_state.get("root", "")
     old_version = int(old_state.get("version", 0))
     active_records = _active_records(store)
-    root = _merkle_root(
-        [_leaf_hash(item["revocation_index"], item["credential_hash"]) for item in active_records]
+    root = (
+        _merkle_root(
+            [
+                _leaf_hash(item["revocation_index"], item["credential_hash"])
+                for item in active_records
+            ]
+        )
+        if active_records
+        else ""
     )
     revoked_count = len(
         [item for item in store["records"].values() if item.get("active") is not True]
@@ -208,8 +238,8 @@ def _empty_state() -> dict:
     return {
         "accumulator_id": ACCUMULATOR_ID,
         "version": 0,
-        "root": _merkle_root([]),
-        "updated_at": "",
+        "root": "",
+        "updated_at": None,
         "algorithm": ALGORITHM,
         "active_count": 0,
         "revoked_count": 0,

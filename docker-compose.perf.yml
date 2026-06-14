@@ -1,70 +1,147 @@
 services:
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    command: -host 0.0.0.0
+    expose:
+      - "8474"
+      - "18000"
+      - "18001"
+      - "18010"
+
   issuer:
+    env_file:
+      - .env.project
     environment:
-      REVOCATION_MODE: accumulator
-      AUDIT_MODE: async
+      REVOCATION_MODE: ${REVOCATION_MODE:-accumulator}
+      AUDIT_MODE: ${AUDIT_MODE:-async}
       AUDIT_ENABLED: "true"
-      FABRIC_CLIENT_MODE: adapter
+      FABRIC_CLIENT_MODE: ${FABRIC_CLIENT_MODE:-adapter}
 
   verifier:
+    env_file:
+      - .env.project
     environment:
-      REVOCATION_MODE: accumulator
-      AUDIT_MODE: async
+      REVOCATION_MODE: ${REVOCATION_MODE:-accumulator}
+      AUDIT_MODE: ${AUDIT_MODE:-async}
       AUDIT_ENABLED: "true"
-      FABRIC_CLIENT_MODE: adapter
+      FABRIC_CLIENT_MODE: ${FABRIC_CLIENT_MODE:-adapter}
       DID_CACHE_ENABLED: "true"
       DID_CACHE_TTL_SECONDS: "30"
       ACCUMULATOR_STATE_CACHE_ENABLED: "true"
       ACCUMULATOR_STATE_CACHE_TTL_SECONDS: "2"
 
-  device_agent:
-    build: ./device-agent
+  benchmark-agent-gateway:
+    build:
+      context: ./dashboard-api
+    env_file:
+      - .env.project
+    working_dir: /workspace
+    command: uvicorn scripts.benchmark_agent_server:app --host 0.0.0.0 --port 8031
+    volumes:
+      - .:/workspace
+      - ./data/dashboard:/data/dashboard
+    environment:
+      ISSUER_URL: ${ISSUER_URL:-http://issuer:8000}
+      VERIFIER_URL: ${DASHBOARD_VERIFIER_URL:-http://verifier:8001}
+      FABRIC_ADAPTER_URL: ${FABRIC_ADAPTER_URL:-http://fabric-adapter:8010}
+      BENCHMARK_OUTPUT_DIR: /data/dashboard/benchmark-agent-gateway
+      BENCHMARK_DEVICE_ID: benchmark-device-01
+      REVOCATION_MODE: ${REVOCATION_MODE:-accumulator}
+      AUDIT_MODE: ${AUDIT_MODE:-async}
+      TOXIPROXY_URL: ${TOXIPROXY_URL:-http://toxiproxy:8474}
+      TOXIPROXY_ISSUER_URL: ${TOXIPROXY_ISSUER_URL:-http://toxiproxy:18000}
+      TOXIPROXY_VERIFIER_URL: ${TOXIPROXY_VERIFIER_URL:-http://toxiproxy:18001}
     depends_on:
       - issuer
       - verifier
-    stdin_open: true
-    tty: true
-    environment:
-      ISSUER_URL: ${ISSUER_URL:-http://issuer:8000}
-      VERIFIER_URL: ${VERIFIER_URL:-http://verifier:8000}
-      MODE: ${MODE:-perf}
-      SHOW_JSON: ${SHOW_JSON:-0}
-      PAUSE: ${PAUSE:-1}
-      PERF_RUNS: ${PERF_RUNS:-200}
-      WARMUP: ${WARMUP:-10}
-      ACTION: ${ACTION:-read}
-      RESOURCE: ${RESOURCE:-iot:device:example}
-      SLEEP_MS: ${SLEEP_MS:-0}
-      OUT_CSV: ${OUT_CSV:-/out/results.csv}
-    volumes:
-      - ./perf-out:/out
-    profiles:
-      - lite
-    cpus: "0.25"
-    mem_limit: 64m
+      - fabric-adapter
+      - toxiproxy
+    cpus: "1.0"
+    mem_limit: 512m
 
-  device_agent_moderate:
-    build: ./device-agent
+  benchmark-agent-constrained:
+    build:
+      context: ./dashboard-api
+    env_file:
+      - .env.project
+    working_dir: /workspace
+    command: uvicorn scripts.benchmark_agent_server:app --host 0.0.0.0 --port 8031
+    volumes:
+      - .:/workspace
+      - ./data/dashboard:/data/dashboard
+    environment:
+      ISSUER_URL: ${ISSUER_URL:-http://issuer:8000}
+      VERIFIER_URL: ${DASHBOARD_VERIFIER_URL:-http://verifier:8001}
+      FABRIC_ADAPTER_URL: ${FABRIC_ADAPTER_URL:-http://fabric-adapter:8010}
+      BENCHMARK_OUTPUT_DIR: /data/dashboard/benchmark-agent-constrained
+      BENCHMARK_DEVICE_ID: benchmark-device-02
+      REVOCATION_MODE: ${REVOCATION_MODE:-accumulator}
+      AUDIT_MODE: ${AUDIT_MODE:-async}
+      TOXIPROXY_URL: ${TOXIPROXY_URL:-http://toxiproxy:8474}
+      TOXIPROXY_ISSUER_URL: ${TOXIPROXY_ISSUER_URL:-http://toxiproxy:18000}
+      TOXIPROXY_VERIFIER_URL: ${TOXIPROXY_VERIFIER_URL:-http://toxiproxy:18001}
     depends_on:
       - issuer
       - verifier
-    stdin_open: true
-    tty: true
-    environment:
-      ISSUER_URL: ${ISSUER_URL:-http://issuer:8000}
-      VERIFIER_URL: ${VERIFIER_URL:-http://verifier:8000}
-      MODE: ${MODE:-perf}
-      SHOW_JSON: ${SHOW_JSON:-0}
-      PAUSE: ${PAUSE:-1}
-      PERF_RUNS: ${PERF_RUNS:-200}
-      WARMUP: ${WARMUP:-10}
-      ACTION: ${ACTION:-read}
-      RESOURCE: ${RESOURCE:-iot:device:example}
-      SLEEP_MS: ${SLEEP_MS:-0}
-      OUT_CSV: ${OUT_CSV:-/out/results.csv}
-    volumes:
-      - ./perf-out:/out
-    profiles:
-      - moderate
+      - fabric-adapter
+      - toxiproxy
     cpus: "0.5"
     mem_limit: 256m
+
+  benchmark-agent-low:
+    build:
+      context: ./dashboard-api
+    env_file:
+      - .env.project
+    working_dir: /workspace
+    command: uvicorn scripts.benchmark_agent_server:app --host 0.0.0.0 --port 8031
+    volumes:
+      - .:/workspace
+      - ./data/dashboard:/data/dashboard
+    environment:
+      ISSUER_URL: ${ISSUER_URL:-http://issuer:8000}
+      VERIFIER_URL: ${DASHBOARD_VERIFIER_URL:-http://verifier:8001}
+      FABRIC_ADAPTER_URL: ${FABRIC_ADAPTER_URL:-http://fabric-adapter:8010}
+      BENCHMARK_OUTPUT_DIR: /data/dashboard/benchmark-agent-low
+      BENCHMARK_DEVICE_ID: benchmark-device-03
+      REVOCATION_MODE: ${REVOCATION_MODE:-accumulator}
+      AUDIT_MODE: ${AUDIT_MODE:-async}
+      TOXIPROXY_URL: ${TOXIPROXY_URL:-http://toxiproxy:8474}
+      TOXIPROXY_ISSUER_URL: ${TOXIPROXY_ISSUER_URL:-http://toxiproxy:18000}
+      TOXIPROXY_VERIFIER_URL: ${TOXIPROXY_VERIFIER_URL:-http://toxiproxy:18001}
+    depends_on:
+      - issuer
+      - verifier
+      - fabric-adapter
+      - toxiproxy
+    cpus: "0.25"
+    mem_limit: 128m
+
+  benchmark-agent-tiny:
+    build:
+      context: ./dashboard-api
+    env_file:
+      - .env.project
+    working_dir: /workspace
+    command: uvicorn scripts.benchmark_agent_server:app --host 0.0.0.0 --port 8031
+    volumes:
+      - .:/workspace
+      - ./data/dashboard:/data/dashboard
+    environment:
+      ISSUER_URL: ${ISSUER_URL:-http://issuer:8000}
+      VERIFIER_URL: ${DASHBOARD_VERIFIER_URL:-http://verifier:8001}
+      FABRIC_ADAPTER_URL: ${FABRIC_ADAPTER_URL:-http://fabric-adapter:8010}
+      BENCHMARK_OUTPUT_DIR: /data/dashboard/benchmark-agent-tiny
+      BENCHMARK_DEVICE_ID: benchmark-device-04
+      REVOCATION_MODE: ${REVOCATION_MODE:-accumulator}
+      AUDIT_MODE: ${AUDIT_MODE:-async}
+      TOXIPROXY_URL: ${TOXIPROXY_URL:-http://toxiproxy:8474}
+      TOXIPROXY_ISSUER_URL: ${TOXIPROXY_ISSUER_URL:-http://toxiproxy:18000}
+      TOXIPROXY_VERIFIER_URL: ${TOXIPROXY_VERIFIER_URL:-http://toxiproxy:18001}
+    depends_on:
+      - issuer
+      - verifier
+      - fabric-adapter
+      - toxiproxy
+    cpus: "0.1"
+    mem_limit: 64m

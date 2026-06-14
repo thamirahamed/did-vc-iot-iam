@@ -1,25 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+load_env_defaults() {
+  local file="$1"
+  local line
+  local key
+  local value
+  local first
+  local last
+  [[ -f "$file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    if [[ -z "${!key+x}" ]]; then
+      first="${value:0:1}"
+      last="${value: -1}"
+      if [[ "${#value}" -ge 2 && "$first" == "$last" && ( "$first" == "\"" || "$first" == "'" ) ]]; then
+        value="${value:1:${#value}-2}"
+      fi
+      export "$key=$value"
+    fi
+  done < "$file"
+}
+
+load_env_defaults "$REPO_ROOT/.env.project"
+load_env_defaults "$SCRIPT_DIR/.fabric-env"
+
 FABRIC_VERSION="${FABRIC_VERSION:-2.5.15}"
 FABRIC_CA_VERSION="${FABRIC_CA_VERSION:-1.5.15}"
-CHANNEL_NAME="${CHANNEL_NAME:-mychannel}"
-CHAINCODE_NAME="${CHAINCODE_NAME:-iam}"
+CHANNEL_NAME="${CHANNEL_NAME:-${FABRIC_CHANNEL_NAME:-mychannel}}"
+CHAINCODE_NAME="${CHAINCODE_NAME:-${FABRIC_CHAINCODE_NAME:-iam}}"
 CHAINCODE_LANG="${CHAINCODE_LANG:-go}"
 CHAINCODE_VERSION="${CHAINCODE_VERSION:-1.0}"
 CHAINCODE_SEQUENCE="${CHAINCODE_SEQUENCE:-1}"
+FABRIC_BATCH_TIMEOUT="${FABRIC_BATCH_TIMEOUT:-2s}"
+FABRIC_MAX_MESSAGE_COUNT="${FABRIC_MAX_MESSAGE_COUNT:-50}"
+FABRIC_PREFERRED_MAX_BYTES="${FABRIC_PREFERRED_MAX_BYTES:-2 MB}"
+FABRIC_ABSOLUTE_MAX_BYTES="${FABRIC_ABSOLUTE_MAX_BYTES:-10 MB}"
 GO_DOCKER_IMAGE="${GO_DOCKER_IMAGE:-golang:1.23}"
 FABRIC_TOOLS_IMAGE="${FABRIC_TOOLS_IMAGE:-hyperledger/fabric-tools:${FABRIC_VERSION}}"
 FABRIC_DOCKER_NETWORK="${FABRIC_DOCKER_NETWORK:-fabric_test}"
 GO_DOCKER_VOLUME="${GO_DOCKER_VOLUME:-did-vc-iot-iam-go-${FABRIC_VERSION}}"
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-if [[ -f "$SCRIPT_DIR/.fabric-env" ]]; then
-  # shellcheck source=/dev/null
-  source "$SCRIPT_DIR/.fabric-env"
-fi
 
 CHAINCODE_PATH="${CHAINCODE_PATH:-$REPO_ROOT/fabric/chaincode/iam}"
 CHAINCODE_PATH_ABS=""
@@ -34,6 +60,13 @@ resolve_path() {
 }
 
 find_fabric_samples_path() {
+  if [[ -n "${FABRIC_TEST_NETWORK_PATH:-}" && -f "$FABRIC_TEST_NETWORK_PATH/network.sh" ]]; then
+    local explicit_test_network
+    explicit_test_network="$(resolve_path "$FABRIC_TEST_NETWORK_PATH")"
+    dirname "$explicit_test_network"
+    return 0
+  fi
+
   if [[ -n "${FABRIC_SAMPLES_PATH:-}" && -f "$FABRIC_SAMPLES_PATH/test-network/network.sh" ]]; then
     resolve_path "$FABRIC_SAMPLES_PATH"
     return 0
@@ -56,11 +89,15 @@ find_fabric_samples_path() {
   cat >&2 <<EOF
 Fabric samples test-network was not found.
 
-Install Fabric samples, or set FABRIC_SAMPLES_PATH in fabric/.fabric-env.
+Install Fabric samples, or set FABRIC_SAMPLES_PATH in .env.project or fabric/.fabric-env.
 
   curl -sSL https://bit.ly/2ysbOFE | bash -s -- 2.5.15 1.5.17
 
 You can create:
+
+  .env.project
+
+or:
 
   fabric/.fabric-env
 
@@ -75,6 +112,11 @@ EOF
 }
 
 find_test_network() {
+  if [[ -n "${FABRIC_TEST_NETWORK_PATH:-}" && -f "$FABRIC_TEST_NETWORK_PATH/network.sh" ]]; then
+    resolve_path "$FABRIC_TEST_NETWORK_PATH"
+    return 0
+  fi
+
   local fabric_samples_path
   fabric_samples_path="$(find_fabric_samples_path)"
   echo "$fabric_samples_path/test-network"
@@ -162,17 +204,70 @@ network() {
   local test_network
   test_network="$(find_test_network)"
   local test_network_script="$test_network/network.sh"
+  local config_backup=""
 
   if ! pushd "$test_network" >/dev/null; then
     echo "Failed to enter Fabric samples test-network directory: $test_network" >&2
     return 1
   fi
 
+  if should_apply_batch_config "$@"; then
+    config_backup="$(apply_batch_config "$test_network")"
+  fi
+
   setup_native_fabric_wrappers "$test_network"
   MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" bash "$test_network_script" "$@"
   local rc=$?
+  if [[ -n "$config_backup" ]]; then
+    restore_batch_config "$test_network" "$config_backup"
+  fi
   popd >/dev/null
   return "$rc"
+}
+
+should_apply_batch_config() {
+  [[ "${1:-}" == "up" ]]
+}
+
+apply_batch_config() {
+  local test_network="$1"
+  local configtx="$test_network/configtx/configtx.yaml"
+  local backup
+  if [[ ! -f "$configtx" ]]; then
+    echo "Fabric configtx.yaml was not found at: $configtx" >&2
+    return 1
+  fi
+  backup="$(mktemp)"
+  cp "$configtx" "$backup"
+  sed -i \
+    -e "s|^\([[:space:]]*BatchTimeout:\).*|\1 ${FABRIC_BATCH_TIMEOUT}|" \
+    -e "s|^\([[:space:]]*MaxMessageCount:\).*|\1 ${FABRIC_MAX_MESSAGE_COUNT}|" \
+    -e "s|^\([[:space:]]*AbsoluteMaxBytes:\).*|\1 ${FABRIC_ABSOLUTE_MAX_BYTES}|" \
+    -e "s|^\([[:space:]]*PreferredMaxBytes:\).*|\1 ${FABRIC_PREFERRED_MAX_BYTES}|" \
+    "$configtx" || {
+      cp "$backup" "$configtx"
+      rm -f "$backup"
+      echo "Failed to apply Fabric batch settings to: $configtx" >&2
+      return 1
+    }
+  cat >&2 <<EOF
+Applied Fabric channel batch settings for this network startup:
+  BatchTimeout: ${FABRIC_BATCH_TIMEOUT}
+  MaxMessageCount: ${FABRIC_MAX_MESSAGE_COUNT}
+  PreferredMaxBytes: ${FABRIC_PREFERRED_MAX_BYTES}
+  AbsoluteMaxBytes: ${FABRIC_ABSOLUTE_MAX_BYTES}
+EOF
+  echo "$backup"
+}
+
+restore_batch_config() {
+  local test_network="$1"
+  local backup="$2"
+  local configtx="$test_network/configtx/configtx.yaml"
+  if [[ -f "$backup" ]]; then
+    cp "$backup" "$configtx"
+    rm -f "$backup"
+  fi
 }
 
 status() {

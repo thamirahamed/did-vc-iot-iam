@@ -2,6 +2,106 @@
 
 Prototype mono repo for a DID and Verifiable Credential based IAM system using Hyperledger Fabric.
 
+## Dashboard UI
+
+The React dashboard lives in `dashboard-ui/` and provides a Packet Tracer style research interface for the IoT DID and VC IAM pipeline. It uses `dashboard-api/` as a small FastAPI backend for persistent dashboard-managed demo devices while still calling the existing issuer, verifier, and Fabric adapter services for DID, VC, revocation, accumulator, authorization, and audit operations.
+
+Start the backend services first:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.fabric.yml -f docker-compose.perf.yml up -d --build
+```
+
+Create a project env file for dashboard, Fabric, and Compose paths:
+
+```powershell
+Copy-Item .env.project.example .env.project
+```
+
+Edit `.env.project` and set Windows paths with forward slashes:
+
+```text
+FABRIC_SAMPLES_PATH=C:/Users/kebab/Documents/CodingProjects/fabric-samples
+FABRIC_SAMPLES_ORGS_HOST_PATH=C:/Users/kebab/Documents/CodingProjects/fabric-samples/test-network/organizations
+```
+
+Check the generated Compose configuration:
+
+```powershell
+docker compose --env-file .env.project config
+```
+
+Start the dashboard API and UI:
+
+```powershell
+docker compose --env-file .env.project -f docker-compose.yml -f docker-compose.fabric.yml -f docker-compose.perf.yml -f docker-compose.dashboard.yml up -d --build
+```
+
+Open:
+
+```text
+http://localhost:5173
+```
+
+Dashboard API:
+
+```text
+http://localhost:8020/health
+http://localhost:8020/dashboard/devices
+http://localhost:8020/dashboard/config
+```
+
+The UI exposes Live Topology, Device Wallet, Fabric Ledger Explorer, Security Scenarios, and Performance pages. The topology uses React Flow so nodes are draggable and edges remain attached while panning and zooming.
+
+## Reset Demo Session
+
+The dashboard API uses SQLite for dashboard-managed demo device and wallet state. The default local path is `data/dashboard/dashboard.db`; Docker uses `DASHBOARD_DB_PATH=/data/dashboard/dashboard.db`. Fabric remains the ledger source for DID metadata, credential status, accumulator state, and audit metadata.
+
+The dashboard UI Reset Session action clears dashboard SQLite state only:
+
+- dashboard devices
+- stored demo VCs and proofs
+- local dashboard events
+- selected device and UI session state
+
+It does not reset Hyperledger Fabric ledger data, issuer runtime data, verifier runtime data, or Fabric adapter state. This split is intentional because the dashboard API runs inside a Linux container while Windows Fabric samples commonly use host-specific `.exe` binaries and Git Bash path handling.
+
+For a true blank Fabric ledger, run the reset manually from Git Bash:
+
+```text
+cd fabric
+bash ./network.sh down
+bash ./network.sh up
+bash ./network.sh deployCC-docker
+bash ./network.sh ping
+```
+
+Start the full dashboard stack:
+
+```powershell
+docker compose --env-file .env.project -f docker-compose.yml -f docker-compose.fabric.yml -f docker-compose.perf.yml -f docker-compose.dashboard.yml up -d --build
+```
+
+Reset dashboard demo session:
+
+```powershell
+curl.exe -X POST http://localhost:8020/dashboard/clean-state ^
+  -H "Content-Type: application/json" ^
+  -d "{\"confirm\":\"RESET\"}"
+```
+
+Requests with `reset_fabric=true` are rejected by the dashboard API. Run Fabric reset manually from Git Bash instead:
+
+```powershell
+curl.exe -X POST http://localhost:8020/dashboard/clean-state ^
+  -H "Content-Type: application/json" ^
+  -d "{\"confirm\":\"RESET\",\"reset_fabric\":true}"
+```
+
+Expected response: HTTP 400 with a message that Fabric reset is manual only.
+
+If Compose reports a missing `FABRIC_SAMPLES_PATH` or `FABRIC_SAMPLES_ORGS_HOST_PATH`, copy `.env.project.example` to `.env.project`, edit the Fabric samples paths, and rerun Compose with `--env-file .env.project`.
+
 ## Components
 
 - `fabric/`: placeholder Fabric network scripts and Go chaincode.

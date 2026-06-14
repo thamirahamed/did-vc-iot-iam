@@ -1,0 +1,55 @@
+services:
+  dashboard-api:
+    build:
+      context: ./dashboard-api
+    env_file:
+      - .env.project
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8020 --reload
+    ports:
+      - "8020:8020"
+    volumes:
+      - .:/workspace
+      - ./fabric:/repo/fabric:ro
+      - ./dashboard-api:/app
+      - ./data/dashboard:/data/dashboard
+      - ${FABRIC_SAMPLES_PATH:?Copy .env.project.example to .env.project or export FABRIC_SAMPLES_PATH}:${FABRIC_SAMPLES_PATH_CONTAINER:-/fabric-samples}
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      ISSUER_URL: ${ISSUER_URL:-http://issuer:8000}
+      VERIFIER_URL: ${DASHBOARD_VERIFIER_URL:-http://verifier:8001}
+      FABRIC_ADAPTER_URL: ${FABRIC_ADAPTER_URL:-http://fabric-adapter:8010}
+      DASHBOARD_DATA_DIR: ${DASHBOARD_DATA_DIR:-/data/dashboard}
+      DASHBOARD_DB_PATH: ${DASHBOARD_DB_PATH:-/data/dashboard/dashboard.db}
+      DASHBOARD_REPO_ROOT: /workspace
+      FABRIC_SAMPLES_PATH: ${FABRIC_SAMPLES_PATH_CONTAINER:-/fabric-samples}
+      FABRIC_TEST_NETWORK_PATH: ${FABRIC_TEST_NETWORK_PATH_CONTAINER:-/fabric-samples/test-network}
+      FABRIC_CHANNEL_NAME: ${FABRIC_CHANNEL_NAME:-mychannel}
+      FABRIC_CHAINCODE_NAME: ${FABRIC_CHAINCODE_NAME:-iam}
+      FABRIC_DOCKER_NETWORK: ${FABRIC_DOCKER_NETWORK:-fabric_test}
+    depends_on:
+      - issuer
+      - verifier
+
+  dashboard-ui:
+    build:
+      context: ./dashboard-ui
+    env_file:
+      - .env.project
+    working_dir: /app
+    command: npm run dev -- --host 0.0.0.0
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./dashboard-ui:/app
+      - /app/node_modules
+    environment:
+      VITE_DASHBOARD_API_URL: http://localhost:8020
+      VITE_ISSUER_URL: http://localhost:8000
+      VITE_VERIFIER_URL: http://localhost:8001
+      VITE_FABRIC_ADAPTER_URL: http://localhost:8010
+      DASHBOARD_API_PROXY_TARGET: http://dashboard-api:8020
+      ISSUER_PROXY_TARGET: http://issuer:8000
+      VERIFIER_PROXY_TARGET: http://verifier:8001
+      FABRIC_ADAPTER_PROXY_TARGET: http://fabric-adapter:8010
+    depends_on:
+      - dashboard-api

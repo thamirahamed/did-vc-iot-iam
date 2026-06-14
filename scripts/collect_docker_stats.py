@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -18,6 +19,12 @@ DEFAULT_CONTAINERS = [
     "orderer.example.com",
     "dev-peer0.org1.example.com",
     "dev-peer0.org2.example.com",
+    "dashboard-api",
+    "fabric-adapter",
+    "benchmark-agent-gateway",
+    "benchmark-agent-constrained",
+    "benchmark-agent-low",
+    "benchmark-agent-tiny",
 ]
 
 CSV_FIELDS = [
@@ -151,12 +158,14 @@ def docker_stats_json() -> list[dict[str, Any]]:
             text=True,
             timeout=30,
         )
-    except FileNotFoundError as exc:
-        raise SystemExit("docker command not found") from exc
+    except FileNotFoundError:
+        return docker_socket_stats_json()
     except subprocess.TimeoutExpired as exc:
         raise SystemExit("docker stats timed out") from exc
 
     if completed.returncode != 0:
+        if Path("/var/run/docker.sock").exists():
+            return docker_socket_stats_json()
         message = completed.stderr.strip() or completed.stdout.strip() or "docker stats failed"
         raise SystemExit(message)
 
@@ -170,6 +179,95 @@ def docker_stats_json() -> list[dict[str, Any]]:
         except json.JSONDecodeError as exc:
             raise SystemExit(f"failed to parse docker stats JSON line: {line}") from exc
     return rows
+
+
+def docker_socket_stats_json() -> list[dict[str, Any]]:
+    if not Path("/var/run/docker.sock").exists():
+        raise SystemExit("Docker socket not available")
+    containers = docker_api_get_json("/containers/json")
+    rows = []
+    for container in containers if isinstance(containers, list) else []:
+        container_id = str(container.get("Id") or "")
+        service = container_service_name(container)
+        stats = docker_api_get_json(f"/containers/{container_id}/stats?stream=false")
+        memory_usage = int(docker_memory_bytes(stats))
+        memory_limit = int((stats.get("memory_stats") or {}).get("limit") or 0)
+        rows.append(
+            {
+                "ID": container_id[:12],
+                "Name": service,
+                "CPUPerc": f"{docker_cpu_percent(stats):.3f}%",
+                "MemUsage": f"{memory_usage}B / {memory_limit}B",
+                "MemPerc": "0%",
+                "NetIO": "0B / 0B",
+                "BlockIO": "0B / 0B",
+            }
+        )
+    return rows
+
+
+def docker_api_get_json(path: str) -> Any:
+    request = f"GET {path} HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n\r\n".encode("ascii")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(5)
+        sock.connect("/var/run/docker.sock")
+        sock.sendall(request)
+        chunks = []
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    response = b"".join(chunks)
+    headers, _, body = response.partition(b"\r\n\r\n")
+    if b"transfer-encoding: chunked" in headers.lower():
+        body = decode_chunked_body(body)
+    return json.loads(body.decode("utf-8"))
+
+
+def decode_chunked_body(body: bytes) -> bytes:
+    decoded = bytearray()
+    remaining = body
+    while remaining:
+        size_text, separator, rest = remaining.partition(b"\r\n")
+        if not separator:
+            break
+        size = int(size_text.split(b";", 1)[0], 16)
+        if size == 0:
+            break
+        decoded.extend(rest[:size])
+        remaining = rest[size + 2 :]
+    return bytes(decoded)
+
+
+def container_service_name(container: dict[str, Any]) -> str:
+    labels = container.get("Labels") if isinstance(container.get("Labels"), dict) else {}
+    service = labels.get("com.docker.compose.service")
+    if service:
+        return str(service)
+    names = container.get("Names") if isinstance(container.get("Names"), list) else []
+    return str(names[0]).strip("/") if names else str(container.get("Id") or "")
+
+
+def docker_cpu_percent(stats: dict[str, Any]) -> float:
+    cpu_stats = stats.get("cpu_stats") if isinstance(stats.get("cpu_stats"), dict) else {}
+    precpu_stats = stats.get("precpu_stats") if isinstance(stats.get("precpu_stats"), dict) else {}
+    cpu_usage = cpu_stats.get("cpu_usage") if isinstance(cpu_stats.get("cpu_usage"), dict) else {}
+    precpu_usage = precpu_stats.get("cpu_usage") if isinstance(precpu_stats.get("cpu_usage"), dict) else {}
+    cpu_delta = float(cpu_usage.get("total_usage") or 0) - float(precpu_usage.get("total_usage") or 0)
+    system_delta = float(cpu_stats.get("system_cpu_usage") or 0) - float(precpu_stats.get("system_cpu_usage") or 0)
+    online_cpus = float(cpu_stats.get("online_cpus") or len(cpu_usage.get("percpu_usage") or []) or 1)
+    if cpu_delta <= 0 or system_delta <= 0:
+        return 0.0
+    return (cpu_delta / system_delta) * online_cpus * 100.0
+
+
+def docker_memory_bytes(stats: dict[str, Any]) -> float:
+    memory_stats = stats.get("memory_stats") if isinstance(stats.get("memory_stats"), dict) else {}
+    usage = float(memory_stats.get("usage") or 0)
+    nested = memory_stats.get("stats")
+    cache = float(nested.get("cache") or 0) if isinstance(nested, dict) else 0.0
+    return max(0.0, usage - cache)
 
 
 def matches_container(name: str, container_id: str, filters: list[str]) -> bool:

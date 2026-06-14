@@ -234,7 +234,20 @@ def revoked_vcs() -> dict:
 
 @app.get("/revocation/accumulator/state")
 def accumulator_state() -> dict:
-    return accumulator.get_state()
+    if fabric_client.fabric_enabled():
+        result = fabric_client.get_accumulator_state(accumulator.ACCUMULATOR_ID)
+        if result.get("ok"):
+            state = result.get("result")
+            if isinstance(state, dict) and state:
+                return _normalize_accumulator_state(state)
+            return accumulator.empty_state()
+        if _is_missing_accumulator_state(result):
+            return accumulator.empty_state()
+        if _is_fabric_adapter_unavailable(result):
+            raise HTTPException(status_code=503, detail="Fabric adapter unavailable.")
+        error = result.get("error") or "Fabric accumulator state read failed"
+        raise HTTPException(status_code=503, detail=error)
+    return _normalize_accumulator_state(accumulator.get_state())
 
 
 @app.get("/revocation/accumulator/proof")
@@ -250,7 +263,7 @@ def accumulator_refresh_proof(payload: RefreshProofRequest) -> dict:
     try:
         return accumulator.refresh_proof(payload.credential_id)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=_accumulator_error_detail(str(exc))) from exc
 
 
 @app.get("/audit/events")
@@ -410,6 +423,53 @@ def _accumulator_response(state: dict) -> dict:
         "root": state.get("root", ""),
         "algorithm": state.get("algorithm", accumulator.ALGORITHM),
     }
+
+
+def _normalize_accumulator_state(state: dict) -> dict:
+    return {
+        "accumulator_id": state.get("accumulator_id")
+        or state.get("id")
+        or accumulator.ACCUMULATOR_ID,
+        "version": int(state.get("version") or 0),
+        "root": state.get("root") or "",
+        "updated_at": state.get("updated_at") or None,
+        "algorithm": state.get("algorithm") or accumulator.ALGORITHM,
+        "active_count": int(state.get("active_count") or 0),
+        "revoked_count": int(state.get("revoked_count") or 0),
+    }
+
+
+def _is_missing_accumulator_state(result: dict) -> bool:
+    text = " ".join(
+        str(result.get(key) or "")
+        for key in ("error", "stdout", "stderr")
+    ).lower()
+    return (
+        "not found" in text
+        or "does not exist" in text
+        or "no accumulator" in text
+        or "nil" in text
+        or "null" == str(result.get("result")).strip().lower()
+        or result.get("result") in ("", None)
+    )
+
+
+def _accumulator_error_detail(text: str) -> str:
+    if text.startswith("credential revoked in accumulator"):
+        return "credential revoked in accumulator"
+    if text.startswith("credential not found in accumulator"):
+        return "credential not found in accumulator"
+    return text
+
+
+def _is_fabric_adapter_unavailable(result: dict) -> bool:
+    text = str(result.get("error") or "").lower()
+    return (
+        "fabric adapter request failed" in text
+        or "connection refused" in text
+        or "timed out" in text
+        or "name or service not known" in text
+    )
 
 
 def _record_audit_event(

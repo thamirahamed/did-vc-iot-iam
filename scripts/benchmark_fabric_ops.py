@@ -21,6 +21,8 @@ RUNS = int(os.getenv("FABRIC_OPS_RUNS", "10"))
 WARMUP_RUNS = int(os.getenv("FABRIC_OPS_WARMUP_RUNS", "2"))
 OUTPUT_DIR = Path(os.getenv("FABRIC_OPS_OUTPUT_DIR", "results"))
 LABEL = os.getenv("FABRIC_OPS_LABEL", "fabric_ops_manual")
+MODE = os.getenv("FABRIC_OPS_MODE", "operation_timings").strip().lower()
+PRESSURE_WRITES_PER_TYPE = int(os.getenv("FABRIC_WRITE_PRESSURE_WRITES_PER_TYPE", "25"))
 os.environ.setdefault("FABRIC_ENABLED", "true")
 
 RAW_FIELDS = [
@@ -58,6 +60,12 @@ def main() -> None:
         raise SystemExit("FABRIC_ENABLED must be true for benchmark_fabric_ops.py")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    if MODE == "fabric_write_pressure":
+        run_write_pressure()
+        return
+    if MODE not in {"operation_timings", "fabric_ops"}:
+        raise SystemExit(f"unsupported FABRIC_OPS_MODE: {MODE}")
+
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     raw_path = OUTPUT_DIR / f"fabric_ops_raw_{timestamp}.csv"
     summary_path = OUTPUT_DIR / f"fabric_ops_summary_{timestamp}.csv"
@@ -88,6 +96,51 @@ def main() -> None:
 
     if not any(row["ok"] == "true" for row in rows):
         raise SystemExit(1)
+
+
+def run_write_pressure() -> None:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    raw_path = OUTPUT_DIR / f"fabric_write_pressure_raw_{timestamp}.csv"
+    summary_path = OUTPUT_DIR / f"fabric_write_pressure_{timestamp}.json"
+    run_id = f"{timestamp.lower()}-{uuid.uuid4().hex[:8]}"
+    operations = write_pressure_operations(run_id, PRESSURE_WRITES_PER_TYPE)
+    rows = []
+    started = time.perf_counter()
+    for index, (group, call) in enumerate(operations, start=1):
+        rows.append(measure_operation(1, group, call) | {"write_index": str(index), "run_id": run_id})
+    total_duration_ms = (time.perf_counter() - started) * 1000
+    raw_fields = RAW_FIELDS + ["write_index", "run_id"]
+    with raw_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=raw_fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    summary = build_write_pressure_summary(rows, total_duration_ms)
+    summary["raw_path"] = str(raw_path)
+    summary["summary_path"] = str(summary_path)
+    with summary_path.open("w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2, sort_keys=True)
+    print(f"Fabric write pressure raw results: {raw_path}")
+    print(f"Fabric write pressure summary results: {summary_path}")
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    if summary["successful_writes"] == 0:
+        raise SystemExit(1)
+
+
+def write_pressure_operations(run_id: str, per_type: int) -> list[tuple[str, Callable[[], dict[str, Any]]]]:
+    operations: list[tuple[str, Callable[[], dict[str, Any]]]] = []
+    for index in range(1, per_type + 1):
+        context = SyntheticContext(prefix=f"pressure-did-{run_id}-{index}")
+        operations.append(("did_registry", context.register_did))
+    for index in range(1, per_type + 1):
+        context = SyntheticContext(prefix=f"pressure-credential-{run_id}-{index}")
+        operations.append(("credential_status", context.register_credential_status))
+    for index in range(1, per_type + 1):
+        context = SyntheticContext(prefix=f"pressure-accumulator-{run_id}-{index}")
+        operations.append(("accumulator_state", context.put_accumulator_state))
+    for index in range(1, per_type + 1):
+        context = SyntheticContext(prefix=f"pressure-audit-{run_id}-{index}")
+        operations.append(("audit_event", context.add_audit_event))
+    return operations
 
 
 def run_operation_set(iteration: int) -> list[dict[str, str]]:
@@ -148,11 +201,12 @@ def measure_operation(
 
 
 class SyntheticContext:
-    def __init__(self) -> None:
-        suffix = uuid.uuid4()
-        self.did = f"did:iot:fabric-ops-{suffix}"
-        self.credential_id = f"urn:uuid:fabric-ops-{suffix}"
-        self.accumulator_id = f"fabric-ops-{suffix}"
+    def __init__(self, prefix: str | None = None) -> None:
+        suffix = prefix or f"fabric-ops-{uuid.uuid4()}"
+        self.did = f"did:iot:{suffix}"
+        self.credential_id = f"urn:uuid:{suffix}"
+        self.accumulator_id = suffix
+        self.audit_event_id = suffix
         self.created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     def register_did(self) -> dict:
@@ -202,7 +256,7 @@ class SyntheticContext:
     def add_audit_event(self) -> dict:
         return fabric_client.write_audit_event(
             {
-                "event_id": f"fabric-ops-{uuid.uuid4()}",
+                "event_id": self.audit_event_id,
                 "event_type": "FABRIC_OPS_BENCHMARK",
                 "subject_did": self.did,
                 "credential_id": self.credential_id,
@@ -260,6 +314,49 @@ def build_summary(rows: list[dict[str, str]]) -> list[dict[str, str]]:
             }
         )
     return summary_rows
+
+
+def build_write_pressure_summary(rows: list[dict[str, str]], total_duration_ms: float) -> dict[str, Any]:
+    success_rows = [row for row in rows if row["ok"] == "true"]
+    durations = [float(row["duration_ms"]) for row in success_rows]
+    group_summaries = []
+    for group in ("did_registry", "credential_status", "accumulator_state", "audit_event"):
+        group_rows = [row for row in rows if row["operation"] == group]
+        group_successes = [row for row in group_rows if row["ok"] == "true"]
+        group_durations = [float(row["duration_ms"]) for row in group_successes]
+        metric = summarize_values(group_durations)
+        group_summaries.append(
+            {
+                "operation_type": group,
+                "count": len(group_rows),
+                "successful_writes": len(group_successes),
+                "failures": len(group_rows) - len(group_successes),
+                "average_latency_ms": float(metric["mean"]) if metric["mean"] else None,
+                "p50_latency_ms": float(metric["p50"]) if metric["p50"] else None,
+                "p95_latency_ms": float(metric["p95"]) if metric["p95"] else None,
+            }
+        )
+    metric = summarize_values(durations)
+    failed_writes = len(rows) - len(success_rows)
+    return {
+        "benchmark_type": "fabric_write_pressure",
+        "label": LABEL,
+        "status": "completed_with_failures" if failed_writes else "completed",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "total_writes": len(rows),
+        "successful_writes": len(success_rows),
+        "failed_writes": failed_writes,
+        "total_duration_ms": round(total_duration_ms, 3),
+        "average_write_latency_ms": float(metric["mean"]) if metric["mean"] else None,
+        "p50_write_latency_ms": float(metric["p50"]) if metric["p50"] else None,
+        "p95_write_latency_ms": float(metric["p95"]) if metric["p95"] else None,
+        "min_write_latency_ms": float(metric["min"]) if metric["min"] else None,
+        "max_write_latency_ms": float(metric["max"]) if metric["max"] else None,
+        "writes_per_second": round((len(success_rows) / total_duration_ms) * 1000, 3)
+        if total_duration_ms > 0
+        else None,
+        "groups": group_summaries,
+    }
 
 
 def summarize_values(values: list[float]) -> dict[str, str]:
