@@ -6,7 +6,25 @@
 
 :root {
   color-scheme: dark;
-  background: #081018;
+  --bg-main: #070714;
+  --bg-sidebar: #0B0D1E;
+  --bg-card: #12142B;
+  --bg-card-elevated: #171A35;
+  --border-main: #2A2D55;
+  --border-soft: #23264A;
+  --accent-cyan: #00D8FF;
+  --accent-cyan-soft: #16F4D0;
+  --accent-purple: #8B5CFF;
+  --accent-pink: #FF4FD8;
+  --accent-orange: #FF8A3D;
+  --status-success: #19D6A3;
+  --status-danger: #FF4D6D;
+  --status-warning: #FFB84D;
+  --text-main: #F2F4FF;
+  --text-muted: #9DA7C7;
+  --text-soft: #6F789B;
+  --grid-line: #1B1E3A;
+  background: var(--bg-main);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -22,9 +40,10 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    radial-gradient(circle at 30% -10%, rgba(0, 220, 229, 0.12), transparent 28rem),
-    #081018;
-  color: #e4edf4;
+    radial-gradient(circle at 28% -12%, rgba(139, 92, 255, 0.16), transparent 30rem),
+    radial-gradient(circle at 82% 0%, rgba(0, 216, 255, 0.08), transparent 24rem),
+    var(--bg-main);
+  color: var(--text-main);
 }
 
 button,
@@ -34,27 +53,27 @@ select {
 }
 
 .glass-card {
-  background: rgba(17, 25, 35, 0.82);
-  border: 1px solid rgba(159, 179, 193, 0.16);
-  border-top-color: rgba(228, 237, 244, 0.14);
+  background: color-mix(in srgb, var(--bg-card) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-main) 72%, transparent);
+  border-top-color: color-mix(in srgb, var(--accent-cyan) 18%, var(--border-soft));
 }
 
 .ledger-table thead th {
-  background: rgba(0, 220, 229, 0.08);
-  color: #00dce5;
-  border-bottom: 1px solid rgba(0, 220, 229, 0.25);
+  background: color-mix(in srgb, var(--accent-purple) 12%, var(--bg-card-elevated));
+  color: var(--accent-cyan);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-cyan) 24%, var(--border-main));
 }
 
 .ledger-table tbody tr:nth-child(odd) {
-  background: rgba(255, 255, 255, 0.015);
+  background: color-mix(in srgb, var(--bg-card) 52%, transparent);
 }
 
 .ledger-table tbody tr:nth-child(even) {
-  background: rgba(0, 220, 229, 0.025);
+  background: color-mix(in srgb, var(--bg-card-elevated) 42%, transparent);
 }
 
 .ledger-table tbody tr:hover {
-  background: rgba(0, 220, 229, 0.06);
+  background: color-mix(in srgb, var(--accent-purple) 16%, var(--bg-card-elevated));
 }
 
 .ledger-tab-toolbar {
@@ -76,13 +95,13 @@ select {
   align-items: center;
   gap: 8px;
   min-height: 34px;
-  border: 1px solid rgba(0, 220, 229, 0.32);
+  border: 1px solid color-mix(in srgb, var(--accent-cyan) 32%, var(--border-main));
   border-radius: 4px;
-  background: rgba(17, 25, 35, 0.88);
+  background: color-mix(in srgb, var(--bg-card-elevated) 90%, transparent);
   padding: 8px 12px;
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 12px;
-  color: #e4edf4;
+  color: var(--text-main);
   transition:
     border-color 160ms ease,
     background 160ms ease,
@@ -91,13 +110,13 @@ select {
 }
 
 .ledger-refresh-button svg {
-  color: #00dce5;
+  color: var(--accent-cyan);
 }
 
 .ledger-refresh-button:hover:not(:disabled) {
-  border-color: rgba(0, 220, 229, 0.55);
-  background: rgba(0, 220, 229, 0.1);
-  color: #00dce5;
+  border-color: color-mix(in srgb, var(--accent-cyan) 56%, var(--border-main));
+  background: color-mix(in srgb, var(--accent-cyan) 12%, var(--bg-card));
+  color: var(--accent-cyan);
 }
 
 .ledger-refresh-button:disabled {
@@ -110,11 +129,11 @@ select {
   z-index: 9999;
   max-width: 320px;
   padding: 8px 10px;
-  border: 1px solid rgba(0, 220, 229, 0.35);
+  border: 1px solid color-mix(in srgb, var(--accent-cyan) 35%, var(--border-main));
   border-radius: 8px;
-  background: rgba(5, 12, 20, 0.96);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  color: #d8edf5;
+  background: color-mix(in srgb, var(--bg-sidebar) 96%, transparent);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.38);
+  color: var(--text-main);
   font-size: 12px;
   line-height: 1.4;
   pointer-events: none;
@@ -122,16 +141,16 @@ select {
 
 .skeleton-card {
   overflow: hidden;
-  border: 1px solid rgba(159, 179, 193, 0.14);
+  border: 1px solid color-mix(in srgb, var(--border-main) 62%, transparent);
   border-radius: 8px;
-  background: rgba(8, 16, 24, 0.55);
+  background: color-mix(in srgb, var(--bg-card) 58%, transparent);
 }
 
 .skeleton-line {
   position: relative;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(159, 179, 193, 0.13);
+  background: color-mix(in srgb, var(--text-soft) 18%, transparent);
 }
 
 .skeleton-line::after {
@@ -142,7 +161,7 @@ select {
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(0, 220, 229, 0.16),
+    color-mix(in srgb, var(--accent-cyan) 20%, transparent),
     transparent
   );
   animation: skeleton-shimmer 1.3s infinite;
@@ -167,31 +186,31 @@ select {
 }
 
 .react-flow__controls {
-  background: rgba(17, 25, 35, 0.92);
-  border: 1px solid rgba(159, 179, 193, 0.18);
+  background: color-mix(in srgb, var(--bg-card) 94%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-main) 68%, transparent);
   box-shadow: none;
 }
 
 .react-flow__controls-button {
-  background: rgba(17, 25, 35, 0.92);
-  border-color: rgba(159, 179, 193, 0.14);
-  color: #e4edf4;
+  background: color-mix(in srgb, var(--bg-card) 94%, transparent);
+  border-color: color-mix(in srgb, var(--border-soft) 70%, transparent);
+  color: var(--text-main);
 }
 
 .react-flow__controls-button:hover {
-  background: rgba(32, 44, 56, 0.98);
+  background: color-mix(in srgb, var(--accent-purple) 14%, var(--bg-card-elevated));
 }
 
 .react-flow__controls-button svg {
-  color: #e4edf4;
-  fill: #e4edf4;
-  stroke: #e4edf4;
+  color: var(--text-main);
+  fill: var(--text-main);
+  stroke: var(--text-main);
 }
 
 .react-flow__controls-button:hover svg {
-  color: #00dce5;
-  fill: #00dce5;
-  stroke: #00dce5;
+  color: var(--accent-cyan);
+  fill: var(--accent-cyan);
+  stroke: var(--accent-cyan);
 }
 
 .topology-animated-edge {
@@ -205,6 +224,6 @@ select {
 }
 
 .react-flow__attribution {
-  background: rgba(17, 25, 35, 0.72);
-  color: #9fb3c1;
+  background: color-mix(in srgb, var(--bg-card) 72%, transparent);
+  color: var(--text-muted);
 }

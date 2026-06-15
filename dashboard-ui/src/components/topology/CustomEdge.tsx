@@ -30,7 +30,7 @@ export default function CustomEdge({
     targetY,
     targetPosition,
   });
-  const color = data?.color || "#00dce5";
+  const color = data?.color || "#00D8FF";
   const active = data?.active;
   const muted = data?.muted;
   const dashLength = 8;

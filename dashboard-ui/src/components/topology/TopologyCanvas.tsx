@@ -49,9 +49,9 @@ function createInitialNodes(
       title: "Issuer Service",
       kind: "issuer",
       items: [
-        { label: "DID registration", color: "bg-blue" },
-        { label: "Identity VC issuance", color: "bg-blue" },
-        { label: "Capability VC issuance", color: "bg-blue" },
+        { label: "DID registration", color: "bg-[#3B82F6]" },
+        { label: "Identity VC issuance", color: "bg-[#3B82F6]" },
+        { label: "Capability VC issuance", color: "bg-[#3B82F6]" },
         { label: "Revocation management", color: "bg-orange" },
         { label: "Accumulator updates", color: "bg-orange" },
       ],
@@ -122,7 +122,7 @@ const initialEdges: Edge<CustomEdgeData>[] = [
     "devices-issuer",
     "devices",
     "issuer",
-    "#3b82f6",
+    "#3B82F6",
     "Identity and Issuance",
     "Device onboarding, DID registration, identity VC issuance, capability VC issuance, and accumulator proof creation.",
     "right",
@@ -132,7 +132,7 @@ const initialEdges: Edge<CustomEdgeData>[] = [
     "devices-verifier",
     "devices",
     "verifier",
-    "#10b981",
+    "#19D6A3",
     "Authorization Request",
     "Device presents VC and accumulator proof to verifier. Verifier returns allow or deny decision.",
     "right",
@@ -142,7 +142,7 @@ const initialEdges: Edge<CustomEdgeData>[] = [
     "issuer-adapter",
     "issuer",
     "adapter",
-    "#f97316",
+    "#FF8A3D",
     "Issuer Ledger Writes",
     "Issuer registers DID, writes credential status, revocation updates, and accumulator roots through the Fabric adapter.",
     "right",
@@ -152,7 +152,7 @@ const initialEdges: Edge<CustomEdgeData>[] = [
     "verifier-adapter",
     "verifier",
     "adapter",
-    "#00dce5",
+    "#22D3EE",
     "Verifier Ledger Reads",
     "Verifier reads DID records and latest accumulator state through the Fabric adapter.",
     "right",
@@ -163,7 +163,7 @@ const initialEdges: Edge<CustomEdgeData>[] = [
     "issuer-queue",
     "issuer",
     "queue",
-    "#a855f7",
+    "#8B5CFF",
     "Issuer Audit",
     "Issuer sends DID registration, VC issuance, and revocation audit events to the non blocking audit queue.",
     "right",
@@ -173,7 +173,7 @@ const initialEdges: Edge<CustomEdgeData>[] = [
     "verifier-queue",
     "verifier",
     "queue",
-    "#a855f7",
+    "#8B5CFF",
     "Verifier Audit",
     "Verifier sends authorization allow and deny audit events to the non blocking audit queue.",
     "right",
@@ -183,7 +183,7 @@ const initialEdges: Edge<CustomEdgeData>[] = [
     "queue-adapter",
     "queue",
     "adapter",
-    "#a855f7",
+    "#8B5CFF",
     "Audit Write",
     "Queued audit events are written to Fabric asynchronously.",
     "right",
@@ -193,7 +193,7 @@ const initialEdges: Edge<CustomEdgeData>[] = [
     "adapter-ledger",
     "adapter",
     "ledger",
-    "#00dce5",
+    "#22D3EE",
     "Chaincode Access",
     "The long running adapter performs query and invoke operations against IAM chaincode.",
     "right",
@@ -269,7 +269,7 @@ function TopologyCanvasInner({
           ...connection,
           type: "custom",
           data: {
-            color: "#00dce5",
+            color: "#00D8FF",
             name: "Custom Link",
             tooltip: "Ad hoc dashboard link.",
           },
@@ -322,7 +322,7 @@ function TopologyCanvasInner({
             y: event.clientY,
             title: edge.data?.name || "Topology Link",
             body: edge.data?.tooltip || "",
-            color: edge.data?.color || "#00dce5",
+            color: edge.data?.color || "#00D8FF",
           })
         }
         onEdgeMouseMove={(event, edge) =>
@@ -331,7 +331,7 @@ function TopologyCanvasInner({
             y: event.clientY,
             title: edge.data?.name || "Topology Link",
             body: edge.data?.tooltip || "",
-            color: edge.data?.color || "#00dce5",
+            color: edge.data?.color || "#00D8FF",
           })
         }
         onEdgeMouseLeave={() => setTooltip(null)}
@@ -344,7 +344,7 @@ function TopologyCanvasInner({
         proOptions={{ hideAttribution: true }}
       >
         <Background
-          color="rgba(49,67,84,0.32)"
+          color="#1B1E3A"
           gap={40}
           variant={BackgroundVariant.Lines}
         />
@@ -361,7 +361,7 @@ function TopologyCanvasInner({
         </Panel>
         <Panel position="bottom-right" className="!m-4">
           <div className="flex flex-col gap-2 rounded border border-line/40 bg-panel/90 px-3 py-3 font-mono text-[10px] uppercase text-muted backdrop-blur">
-            <LegendDot color="bg-blue" label="Identity and Issuance" />
+            <LegendDot color="bg-[#3B82F6]" label="Identity and Issuance" />
             <LegendDot color="bg-green" label="Authorization" />
             <LegendDot color="bg-orange" label="Revocation and Accumulator" />
             <LegendDot color="bg-purple" label="Async Audit" />

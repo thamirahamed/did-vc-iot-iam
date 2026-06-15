@@ -31,7 +31,7 @@ export default function Sidebar({
   onCleanState,
 }: SidebarProps) {
   return (
-    <aside className="fixed inset-y-0 left-0 z-40 flex w-[220px] flex-col border-r border-line/40 bg-panel/95">
+    <aside className="fixed inset-y-0 left-0 z-40 flex w-[220px] flex-col border-r border-line/40 bg-sidebar/95">
       <div className="border-b border-line/30 p-4">
         <div className="flex items-center gap-3">
           <div>

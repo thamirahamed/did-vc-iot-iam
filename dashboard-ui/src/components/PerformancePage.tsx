@@ -43,6 +43,24 @@ const comparisonOrder = [
 
 const baselineLabel = "Centralised Baseline";
 
+const chartPalette = {
+  fabric: "#00D8FF",
+  cyanSoft: "#16F4D0",
+  baseline: "#8B5CFF",
+  proof: "#8B5CFF",
+  pink: "#FF4FD8",
+  revocation: "#FF8A3D",
+  success: "#19D6A3",
+  danger: "#FF4D6D",
+  warning: "#FFB84D",
+  muted: "#9DA7C7",
+  grid: "#1B1E3A",
+  cursor: "rgba(139, 92, 255, 0.12)",
+  tooltipBackground: "#12142B",
+  tooltipBorder: "rgba(42,45,85,0.92)",
+  text: "#F2F4FF",
+};
+
 const resourceServiceOrder = [
   "benchmark-agent-gateway",
   "benchmark-agent-constrained",
@@ -161,7 +179,15 @@ const revocationTestDetails: Record<string, string> = {
   "Connection disruption recovery": "Simulates temporary verifier connection disruption, then clears it and confirms the device agent can recover.",
 };
 
-const categoryColors = ["#00dce5", "#10b981", "#a855f7", "#f97316", "#3b82f6", "#f59e0b", "#94a3b8"];
+const categoryColors = [
+  chartPalette.fabric,
+  chartPalette.cyanSoft,
+  chartPalette.proof,
+  chartPalette.revocation,
+  chartPalette.pink,
+  chartPalette.success,
+  chartPalette.warning,
+];
 
 const categoryDetails: Record<string, string> = {
   Fabric: "Basic Fabric adapter or chaincode reachability operation.",
@@ -256,42 +282,42 @@ export default function PerformancePage() {
     {
       label: "Centralised Baseline full lifecycle",
       value: formatDuration(localLifecycle),
-      color: "#3b82f6",
+      color: chartPalette.baseline,
     },
     {
       label: "Fabric full lifecycle",
       value: formatDuration(fabricLifecycle),
-      color: "#00dce5",
+      color: chartPalette.fabric,
     },
     {
       label: "Lifecycle overhead",
       value: formatLifecycleDifference(lifecycleDifference),
-      color: lifecycleDifference === null ? "#9fb3c1" : lifecycleDifference <= 0 ? "#10b981" : "#f97316",
+      color: lifecycleDifference === null ? chartPalette.muted : lifecycleDifference <= 0 ? chartPalette.success : chartPalette.revocation,
     },
     {
       label: "Fabric valid access",
       value: formatDuration(summary?.comparison.fabric?.headline.auth_allow_ms),
-      color: "#10b981",
+      color: chartPalette.success,
     },
     {
       label: "Fabric revocation",
       value: formatDuration(summary?.comparison.fabric?.headline.revocation_ms),
-      color: "#f97316",
+      color: chartPalette.revocation,
     },
     {
       label: "Fabric proof refresh",
       value: formatDuration(summary?.comparison.fabric?.headline.proof_refresh_ms),
-      color: "#a855f7",
+      color: chartPalette.proof,
     },
     {
       label: "Ledger read latency",
       value: formatDuration(fabricOps?.headline.ledger_read_ms),
-      color: "#00dce5",
+      color: chartPalette.fabric,
     },
     {
       label: "Ledger write latency",
       value: formatDuration(fabricOps?.headline.ledger_write_ms),
-      color: "#f97316",
+      color: chartPalette.revocation,
     },
   ];
 
@@ -419,12 +445,12 @@ export default function PerformancePage() {
           ) : stageRows.length ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={stageRows} layout="vertical" margin={{ top: 8, right: 24, bottom: 8, left: 18 }}>
-                <CartesianGrid stroke="rgba(159,179,193,0.16)" horizontal={false} />
-                <XAxis type="number" stroke="#9fb3c1" tickLine={false} tickFormatter={(value) => formatAxisDuration(Number(value))} />
-                <YAxis type="category" dataKey="shortLabel" stroke="#9fb3c1" tickLine={false} width={82} />
-                <Tooltip content={<StageTooltip />} cursor={{ fill: "rgba(0, 220, 229, 0.06)" }} />
-                <Bar dataKey="local" name={baselineLabel} fill="#3b82f6" radius={[0, 4, 4, 0]} />
-                <Bar dataKey="fabric" name="Fabric" fill="#00dce5" radius={[0, 4, 4, 0]} />
+                <CartesianGrid stroke={chartPalette.grid} horizontal={false} />
+                <XAxis type="number" stroke={chartPalette.muted} tickLine={false} tickFormatter={(value) => formatAxisDuration(Number(value))} />
+                <YAxis type="category" dataKey="shortLabel" stroke={chartPalette.muted} tickLine={false} width={82} />
+                <Tooltip content={<StageTooltip />} cursor={{ fill: chartPalette.cursor }} />
+                <Bar dataKey="local" name={baselineLabel} fill={chartPalette.baseline} radius={[0, 4, 4, 0]} />
+                <Bar dataKey="fabric" name="Fabric" fill={chartPalette.fabric} radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -437,10 +463,10 @@ export default function PerformancePage() {
           ) : categoryRows.length ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={categoryRows} layout="vertical" margin={{ top: 8, right: 24, bottom: 8, left: 32 }}>
-                <CartesianGrid stroke="rgba(159,179,193,0.16)" horizontal={false} />
-                <XAxis type="number" stroke="#9fb3c1" tickLine={false} tickFormatter={(value) => formatAxisDuration(Number(value))} />
-                <YAxis type="category" dataKey="category" stroke="#9fb3c1" tickLine={false} width={128} />
-                <Tooltip content={<CategoryTooltip />} cursor={{ fill: "rgba(0, 220, 229, 0.06)" }} />
+                <CartesianGrid stroke={chartPalette.grid} horizontal={false} />
+                <XAxis type="number" stroke={chartPalette.muted} tickLine={false} tickFormatter={(value) => formatAxisDuration(Number(value))} />
+                <YAxis type="category" dataKey="category" stroke={chartPalette.muted} tickLine={false} width={128} />
+                <Tooltip content={<CategoryTooltip />} cursor={{ fill: chartPalette.cursor }} />
                 <Bar dataKey="average" name="Average duration" radius={[0, 4, 4, 0]}>
                   {categoryRows.map((row, index) => (
                     <Cell key={row.category} fill={categoryColors[index % categoryColors.length]} />
@@ -522,10 +548,10 @@ function ConstrainedSection({
         description="Each profile runs the holder workflow inside its own resource limited device agent container."
       />
       <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard card={{ label: "Gateway full lifecycle", value: formatDuration(gateway?.full_lifecycle_ms), color: "#00dce5" }} loading={loading} />
-        <MetricCard card={{ label: "Constrained full lifecycle", value: formatDuration(constrained?.full_lifecycle_ms), color: "#f59e0b" }} loading={loading} />
-        <MetricCard card={{ label: "Low resource full lifecycle", value: formatDuration(low?.full_lifecycle_ms), color: "#f97316" }} loading={loading} />
-        <MetricCard card={{ label: "Tiny IoT full lifecycle", value: formatDuration(tiny?.full_lifecycle_ms), color: "#a855f7" }} loading={loading} />
+        <MetricCard card={{ label: "Gateway full lifecycle", value: formatDuration(gateway?.full_lifecycle_ms), color: chartPalette.fabric }} loading={loading} />
+        <MetricCard card={{ label: "Constrained full lifecycle", value: formatDuration(constrained?.full_lifecycle_ms), color: chartPalette.warning }} loading={loading} />
+        <MetricCard card={{ label: "Low resource full lifecycle", value: formatDuration(low?.full_lifecycle_ms), color: chartPalette.revocation }} loading={loading} />
+        <MetricCard card={{ label: "Tiny IoT full lifecycle", value: formatDuration(tiny?.full_lifecycle_ms), color: chartPalette.proof }} loading={loading} />
       </div>
       <div className="mt-5 grid gap-5 xl:grid-cols-2">
         <ChartCard title="Constrained profile latency comparison">
@@ -534,18 +560,18 @@ function ConstrainedSection({
           ) : profiles.length ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={profiles} margin={{ top: 8, right: 18, bottom: 8, left: 0 }}>
-                <CartesianGrid stroke="rgba(159,179,193,0.16)" vertical={false} />
-                <XAxis dataKey="label" stroke="#9fb3c1" tickLine={false} />
-                <YAxis stroke="#9fb3c1" tickLine={false} tickFormatter={(value) => formatAxisDuration(Number(value))} />
+                <CartesianGrid stroke={chartPalette.grid} vertical={false} />
+                <XAxis dataKey="label" stroke={chartPalette.muted} tickLine={false} />
+                <YAxis stroke={chartPalette.muted} tickLine={false} tickFormatter={(value) => formatAxisDuration(Number(value))} />
                 <Tooltip
                   formatter={(value) => formatDuration(Number(value))}
                   contentStyle={tooltipStyle}
                   labelStyle={tooltipLabelStyle}
-                  cursor={{ fill: "rgba(0, 220, 229, 0.06)" }}
+                  cursor={{ fill: chartPalette.cursor }}
                 />
-                <Bar dataKey="full_lifecycle_ms" name="Full lifecycle" fill="#00dce5" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="auth_allow_ms" name="Valid access" fill="#10b981" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="proof_refresh_ms" name="Proof refresh" fill="#a855f7" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="full_lifecycle_ms" name="Full lifecycle" fill={chartPalette.fabric} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="auth_allow_ms" name="Valid access" fill={chartPalette.success} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="proof_refresh_ms" name="Proof refresh" fill={chartPalette.proof} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -580,10 +606,10 @@ function RevocationConnectivitySection({
         description="Tests device-agent stale proof denial, proof refresh recovery, restore access, delayed reconnect, and Docker proxy network disruption."
       />
       <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard card={{ label: "Active stale denial", value: formatDuration(metric("Active stale proof denial")), color: "#f97316" }} loading={loading} />
-        <MetricCard card={{ label: "Revoked stale denial", value: formatDuration(metric("Revoked stale proof denial")), color: "#ef4444" }} loading={loading} />
-        <MetricCard card={{ label: "Proof refresh", value: formatDuration(metric("Active stale proof refresh recovery")), color: "#a855f7" }} loading={loading} />
-        <MetricCard card={{ label: "Restore access", value: formatDuration(metric("Restore access recovery")), color: "#10b981" }} loading={loading} />
+        <MetricCard card={{ label: "Active stale denial", value: formatDuration(metric("Active stale proof denial")), color: chartPalette.revocation }} loading={loading} />
+        <MetricCard card={{ label: "Revoked stale denial", value: formatDuration(metric("Revoked stale proof denial")), color: chartPalette.danger }} loading={loading} />
+        <MetricCard card={{ label: "Proof refresh", value: formatDuration(metric("Active stale proof refresh recovery")), color: chartPalette.proof }} loading={loading} />
+        <MetricCard card={{ label: "Restore access", value: formatDuration(metric("Restore access recovery")), color: chartPalette.success }} loading={loading} />
       </div>
       <div className="mt-5">
         <TableCard title="Revocation connectivity test results">
@@ -628,17 +654,17 @@ function FabricTuningSection({
           ) : completedProfiles.length ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={completedProfiles} layout="vertical" margin={{ top: 8, right: 28, bottom: 8, left: 36 }}>
-                <CartesianGrid stroke="rgba(159,179,193,0.16)" horizontal={false} />
+                <CartesianGrid stroke={chartPalette.grid} horizontal={false} />
                 <XAxis
                   type="number"
-                  stroke="#9fb3c1"
+                  stroke={chartPalette.muted}
                   tickLine={false}
                   tickFormatter={(value) => formatAxisDuration(Number(value))}
                 />
                 <YAxis
                   type="category"
                   dataKey="profile_id"
-                  stroke="#9fb3c1"
+                  stroke={chartPalette.muted}
                   tickLine={false}
                   tickFormatter={formatFabricTuningProfileName}
                   width={170}
@@ -649,12 +675,12 @@ function FabricTuningSection({
                   labelFormatter={(label) => formatFabricTuningProfileName(String(label))}
                   contentStyle={tooltipStyle}
                   labelStyle={tooltipLabelStyle}
-                  cursor={{ fill: "rgba(0, 220, 229, 0.06)" }}
+                  cursor={{ fill: chartPalette.cursor }}
                 />
-                <Bar dataKey="full_lifecycle_ms" name="Full lifecycle" fill="#00dce5" radius={[0, 4, 4, 0]} />
-                <Bar dataKey="auth_allow_ms" name="Valid access" fill="#10b981" radius={[0, 4, 4, 0]} />
-                <Bar dataKey="revocation_ms" name="Revocation" fill="#f97316" radius={[0, 4, 4, 0]} />
-                <Bar dataKey="proof_refresh_ms" name="Proof refresh" fill="#a78bfa" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="full_lifecycle_ms" name="Full lifecycle" fill={chartPalette.fabric} radius={[0, 4, 4, 0]} />
+                <Bar dataKey="auth_allow_ms" name="Valid access" fill={chartPalette.success} radius={[0, 4, 4, 0]} />
+                <Bar dataKey="revocation_ms" name="Revocation" fill={chartPalette.revocation} radius={[0, 4, 4, 0]} />
+                <Bar dataKey="proof_refresh_ms" name="Proof refresh" fill={chartPalette.proof} radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -682,16 +708,16 @@ function FabricTuningSection({
             ) : pressureRows.some((row) => row.writes_per_second !== null) ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={pressureRows} layout="vertical" margin={{ top: 8, right: 24, bottom: 8, left: 42 }}>
-                  <CartesianGrid stroke="rgba(159,179,193,0.16)" horizontal={false} />
-                  <XAxis type="number" stroke="#9fb3c1" tickLine={false} tickFormatter={(value) => `${Number(value).toFixed(1)}/s`} />
-                  <YAxis type="category" dataKey="label" stroke="#9fb3c1" tickLine={false} width={190} tick={{ fontSize: 11 }} />
+                  <CartesianGrid stroke={chartPalette.grid} horizontal={false} />
+                  <XAxis type="number" stroke={chartPalette.muted} tickLine={false} tickFormatter={(value) => `${Number(value).toFixed(1)}/s`} />
+                  <YAxis type="category" dataKey="label" stroke={chartPalette.muted} tickLine={false} width={190} tick={{ fontSize: 11 }} />
                   <Tooltip
                     formatter={(value) => `${Number(value).toFixed(3)} writes/s`}
                     contentStyle={tooltipStyle}
                     labelStyle={tooltipLabelStyle}
-                    cursor={{ fill: "rgba(0, 220, 229, 0.06)" }}
+                    cursor={{ fill: chartPalette.cursor }}
                   />
-                  <Bar dataKey="writes_per_second" name="Writes per second" fill="#00dce5" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="writes_per_second" name="Writes per second" fill={chartPalette.fabric} radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -704,16 +730,16 @@ function FabricTuningSection({
             ) : pressureRows.some((row) => row.p95_write_latency_ms !== null) ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={pressureRows} layout="vertical" margin={{ top: 8, right: 24, bottom: 8, left: 42 }}>
-                  <CartesianGrid stroke="rgba(159,179,193,0.16)" horizontal={false} />
-                  <XAxis type="number" stroke="#9fb3c1" tickLine={false} tickFormatter={(value) => formatAxisDuration(Number(value))} />
-                  <YAxis type="category" dataKey="label" stroke="#9fb3c1" tickLine={false} width={190} tick={{ fontSize: 11 }} />
+                  <CartesianGrid stroke={chartPalette.grid} horizontal={false} />
+                  <XAxis type="number" stroke={chartPalette.muted} tickLine={false} tickFormatter={(value) => formatAxisDuration(Number(value))} />
+                  <YAxis type="category" dataKey="label" stroke={chartPalette.muted} tickLine={false} width={190} tick={{ fontSize: 11 }} />
                   <Tooltip
                     formatter={(value) => formatDuration(Number(value))}
                     contentStyle={tooltipStyle}
                     labelStyle={tooltipLabelStyle}
-                    cursor={{ fill: "rgba(0, 220, 229, 0.06)" }}
+                    cursor={{ fill: chartPalette.cursor }}
                   />
-                  <Bar dataKey="p95_write_latency_ms" name="P95 write latency" fill="#f97316" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="p95_write_latency_ms" name="P95 write latency" fill={chartPalette.revocation} radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -752,10 +778,10 @@ function ResourceUsageSection({
           ) : compactRows.length ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={compactRows} layout="vertical" margin={{ top: 8, right: 24, bottom: 8, left: 12 }}>
-                <CartesianGrid stroke="rgba(159,179,193,0.16)" horizontal={false} />
+                <CartesianGrid stroke={chartPalette.grid} horizontal={false} />
                 <XAxis
                   type="number"
-                  stroke="#9fb3c1"
+                  stroke={chartPalette.muted}
                   tickLine={false}
                   domain={[0, resourceAxisMax]}
                   allowDecimals={false}
@@ -765,7 +791,7 @@ function ResourceUsageSection({
                 <YAxis
                   type="category"
                   dataKey="service"
-                  stroke="#9fb3c1"
+                  stroke={chartPalette.muted}
                   tickLine={false}
                   width={178}
                   tick={{ fontSize: 11 }}
@@ -776,9 +802,9 @@ function ResourceUsageSection({
                   labelFormatter={(label) => formatServiceName(String(label))}
                   contentStyle={tooltipStyle}
                   labelStyle={tooltipLabelStyle}
-                  cursor={{ fill: "rgba(0, 220, 229, 0.06)" }}
+                  cursor={{ fill: chartPalette.cursor }}
                 />
-                <Bar dataKey="peak_memory_mb" name="Peak RAM" fill="#00dce5" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="peak_memory_mb" name="Peak RAM" fill={chartPalette.fabric} radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -791,10 +817,10 @@ function ResourceUsageSection({
           ) : compactRows.length ? (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={compactRows} layout="vertical" margin={{ top: 8, right: 24, bottom: 8, left: 12 }}>
-                <CartesianGrid stroke="rgba(159,179,193,0.16)" horizontal={false} />
+                <CartesianGrid stroke={chartPalette.grid} horizontal={false} />
                 <XAxis
                   type="number"
-                  stroke="#9fb3c1"
+                  stroke={chartPalette.muted}
                   tickLine={false}
                   domain={[0, resourceAxisMax]}
                   allowDecimals={false}
@@ -804,7 +830,7 @@ function ResourceUsageSection({
                 <YAxis
                   type="category"
                   dataKey="service"
-                  stroke="#9fb3c1"
+                  stroke={chartPalette.muted}
                   tickLine={false}
                   width={178}
                   tick={{ fontSize: 11 }}
@@ -815,9 +841,9 @@ function ResourceUsageSection({
                   labelFormatter={(label) => formatServiceName(String(label))}
                   contentStyle={tooltipStyle}
                   labelStyle={tooltipLabelStyle}
-                  cursor={{ fill: "rgba(0, 220, 229, 0.06)" }}
+                  cursor={{ fill: chartPalette.cursor }}
                 />
-                <Bar dataKey="avg_cpu_percent" name="Average CPU" fill="#10b981" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="avg_cpu_percent" name="Average CPU" fill={chartPalette.success} radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -1140,10 +1166,10 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <span className={`whitespace-nowrap rounded border px-2 py-1 font-mono text-[10px] uppercase ${
       good
-        ? "border-green-400/40 bg-green-400/10 text-green-300"
+        ? "border-green/40 bg-green/10 text-green"
         : warn
           ? "border-line/40 bg-background/50 text-muted"
-          : "border-red-400/40 bg-red-400/10 text-red-300"
+          : "border-danger/40 bg-danger/10 text-danger"
     }`}>
       {formatStatusLabel(status)}
     </span>
@@ -1771,14 +1797,14 @@ function capitalize(value: string): string {
 }
 
 const tooltipStyle: CSSProperties = {
-  background: "#111923",
-  border: "1px solid rgba(159,179,193,0.24)",
-  color: "#e4edf4",
+  background: chartPalette.tooltipBackground,
+  border: `1px solid ${chartPalette.tooltipBorder}`,
+  color: chartPalette.text,
   borderRadius: "6px",
   padding: "10px 12px",
 };
 
 const tooltipLabelStyle: CSSProperties = {
-  color: "#e4edf4",
+  color: chartPalette.text,
   fontWeight: 600,
 };

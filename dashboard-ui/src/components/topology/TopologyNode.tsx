@@ -31,7 +31,7 @@ const iconMap = {
 
 const toneMap = {
   devices: "border-cyan/45 text-cyan shadow-glow",
-  issuer: "border-blue/45 text-blue",
+  issuer: "border-[#3B82F6]/45 text-[#3B82F6]",
   verifier: "border-green/45 text-green",
   queue: "border-purple/45 text-purple shadow-glow-purple",
   adapter: "border-cyan/35 text-cyan",
@@ -149,7 +149,7 @@ function bulletColor(item: string | { label: string; color: string }): string {
   if (item.includes("VC verification") || item.includes("authorization") || item.includes("Decision")) {
     return "bg-green";
   }
-  return "bg-blue";
+  return "bg-[#3B82F6]";
 }
 
 function statusText(status: DashboardDevice["status"]): string {
