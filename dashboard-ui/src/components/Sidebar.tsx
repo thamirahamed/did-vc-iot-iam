@@ -1,5 +1,4 @@
 import {
-  Activity,
   BarChart3,
   RotateCcw,
   GitBranch,
@@ -8,6 +7,7 @@ import {
   Wallet,
 } from "lucide-react";
 import type { NavItem, PageKey } from "../types";
+import iamLabLogo from "../iam_lab_logo.svg?raw";
 
 const navItems: NavItem[] = [
   { key: "topology", label: "Live Topology", icon: Network },
@@ -34,13 +34,10 @@ export default function Sidebar({
     <aside className="fixed inset-y-0 left-0 z-40 flex w-[220px] flex-col border-r border-line/40 bg-panel/95">
       <div className="border-b border-line/30 p-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded border border-cyan/40 bg-cyan/10 text-cyan">
-            <Activity size={18} />
-          </div>
           <div>
             <h1 className="text-base font-bold leading-tight text-cyan">IAM Lab</h1>
             <p className="font-mono text-[10px] uppercase text-muted">
-              Fabric VC Research
+              VC BASED IOT IAM
             </p>
           </div>
         </div>
@@ -77,8 +74,8 @@ export default function Sidebar({
           <RotateCcw size={15} />
           Reset Session
         </button>
-        <div className="font-mono text-[10px] uppercase text-muted">
-          DID + VC + Accumulator
+        <div className="font-mono text-[10px] uppercase text-muted text-center">
+          Thamir Ahamed | CB012828
         </div>
       </div>
     </aside>

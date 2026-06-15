@@ -2004,13 +2004,27 @@ def _repo_root() -> Path:
 
 def _run_happy_path_scenario(device: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str]:
     _require_active_credentials(device, require_identity_proof=True, require_capability_proof=True)
-    decision, updated = _authorize_for_scenario(device, "read", "iot:device:example", False)
+    decision, updated = _authorize_for_scenario(
+        device,
+        "read",
+        "iot:device:example",
+        False,
+        auto_refresh=True,
+        retry_on_stale=True,
+    )
     return decision, updated, "authorization allowed"
 
 
 def _run_wrong_action_scenario(device: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str]:
     _require_active_credentials(device, require_identity_proof=False, require_capability_proof=True)
-    decision, updated = _authorize_for_scenario(device, "write", "iot:device:example", False)
+    decision, updated = _authorize_for_scenario(
+        device,
+        "write",
+        "iot:device:example",
+        False,
+        auto_refresh=True,
+        retry_on_stale=True,
+    )
     return decision, updated, "requested action not permitted"
 
 
@@ -2038,8 +2052,14 @@ def _run_revocation_scenario(device: dict[str, Any]) -> tuple[dict[str, Any], di
     if accumulator is not None:
         patch["last_accumulator_state"] = accumulator
     revoked = _update(device["id"], patch)
-    decision, updated = _authorize_for_scenario(revoked, "read", "iot:device:example", False)
-    return decision, updated, "credential revoked or proof stale"
+    decision, updated = _authorize_for_scenario(
+        revoked,
+        "read",
+        "iot:device:example",
+        False,
+        retry_on_stale=True,
+    )
+    return decision, updated, "credential revoked"
 
 
 def _run_proof_refresh_scenario(device: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str]:
@@ -2056,7 +2076,14 @@ def _run_proof_refresh_scenario(device: dict[str, Any]) -> tuple[dict[str, Any],
         _update(device["id"], {"last_error": f"Proof refresh failed: {exc}"})
         raise HTTPException(status_code=502, detail=f"Proof refresh failed: {exc}") from exc
     refreshed = _update(device["id"], patch)
-    decision, updated = _authorize_for_scenario(refreshed, "read", "iot:device:example", False)
+    decision, updated = _authorize_for_scenario(
+        refreshed,
+        "read",
+        "iot:device:example",
+        False,
+        auto_refresh=True,
+        retry_on_stale=True,
+    )
     return decision, updated, "proof refreshed before authorization"
 
 
@@ -2065,31 +2092,147 @@ def _authorize_for_scenario(
     action: str,
     resource: str,
     tamper_signature: bool,
+    *,
+    auto_refresh: bool = False,
+    retry_on_stale: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     identity_vc = device.get("identity_vc")
     capability_vc = device.get("capability_vc")
     if not isinstance(identity_vc, dict) or not isinstance(capability_vc, dict):
         raise HTTPException(status_code=400, detail="identity and capability VCs are required")
+
+    working_device = device
+    refresh_attempted = False
+    if auto_refresh and not tamper_signature and _is_active_non_revoked_device(working_device):
+        working_device, refresh_attempted = _refresh_scenario_proofs_if_stale(working_device)
+        identity_vc = working_device.get("identity_vc")
+        capability_vc = working_device.get("capability_vc")
+        if not isinstance(identity_vc, dict) or not isinstance(capability_vc, dict):
+            raise HTTPException(status_code=400, detail="identity and capability VCs are required")
+
     auth_payload = client.sign_authorization_payload(
-        private_key_b64=device["private_key"],
+        private_key_b64=working_device["private_key"],
         identity_vc=identity_vc,
         capability_vc=capability_vc,
         action=action,
         resource=resource,
-        identity_proof=device.get("identity_proof"),
-        capability_proof=device.get("capability_proof"),
+        identity_proof=working_device.get("identity_proof"),
+        capability_proof=working_device.get("capability_proof"),
         tamper_signature=tamper_signature,
     )
     decision = _call_or_502(lambda: client.authorize(auth_payload), "Authorization failed")
+    initial_decision = dict(decision)
+
+    if (
+        retry_on_stale
+        and not tamper_signature
+        and decision.get("decision") == "deny"
+        and decision.get("reason") == "accumulator proof stale"
+    ):
+        retry_device, retry_refreshed = _refresh_scenario_proofs_for_retry(working_device)
+        refresh_attempted = refresh_attempted or retry_refreshed
+        if retry_device is not None:
+            working_device = retry_device
+            identity_vc = working_device.get("identity_vc")
+            capability_vc = working_device.get("capability_vc")
+            if not isinstance(identity_vc, dict) or not isinstance(capability_vc, dict):
+                raise HTTPException(status_code=400, detail="identity and capability VCs are required")
+            retry_payload = client.sign_authorization_payload(
+                private_key_b64=working_device["private_key"],
+                identity_vc=identity_vc,
+                capability_vc=capability_vc,
+                action=action,
+                resource=resource,
+                identity_proof=working_device.get("identity_proof"),
+                capability_proof=working_device.get("capability_proof"),
+                tamper_signature=False,
+            )
+            decision = _call_or_502(lambda: client.authorize(retry_payload), "Authorization failed")
+            if decision.get("decision") == "allow" and initial_decision.get("reason") == "accumulator proof stale":
+                decision = {**decision, "reason": "authorized after proof refresh"}
+        elif _has_revoked_capability(working_device):
+            decision = {"decision": "deny", "reason": "credential revoked in accumulator"}
+
     updated = _update(
-        device["id"],
+        working_device["id"],
         {
             "last_decision": decision.get("decision"),
             "last_reason": decision.get("reason"),
             "last_error": None,
         },
     )
+    if refresh_attempted:
+        decision = {**decision, "initial_decision": initial_decision}
     return decision, updated
+
+
+def _refresh_scenario_proofs_if_stale(device: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    accumulator = _optional_accumulator_state()
+    if not isinstance(accumulator, dict):
+        return device, False
+    latest_version = _safe_int(accumulator.get("version"))
+    latest_root = str(accumulator.get("root") or "")
+    if latest_version is None or not latest_root:
+        return device, False
+
+    needs_refresh = False
+    for proof in (device.get("identity_proof"), device.get("capability_proof")):
+        if not isinstance(proof, dict):
+            continue
+        proof_version = _safe_int(proof.get("version"))
+        proof_root = str(proof.get("root") or "")
+        if proof_version != latest_version or proof_root != latest_root:
+            needs_refresh = True
+            break
+    if not needs_refresh:
+        return device, False
+    refreshed = _refresh_scenario_proofs(device)
+    return refreshed, True
+
+
+def _refresh_scenario_proofs_for_retry(device: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]:
+    if not _is_active_non_revoked_device(device):
+        if not _has_revoked_capability(device):
+            return None, False
+        try:
+            _refresh_scenario_proofs(device)
+        except Exception as exc:
+            _update(device["id"], {"last_error": f"Revoked proof refresh blocked: {exc}"})
+            return None, True
+        return None, True
+    try:
+        return _refresh_scenario_proofs(device), True
+    except Exception as exc:
+        _update(device["id"], {"last_error": f"Proof refresh failed after stale authorization: {exc}"})
+        if _has_revoked_capability(device) or _is_accumulator_missing_error(exc):
+            return None, True
+        raise HTTPException(status_code=502, detail=f"Proof refresh failed after stale authorization: {exc}") from exc
+
+
+def _refresh_scenario_proofs(device: dict[str, Any]) -> dict[str, Any]:
+    patch: dict[str, Any] = {"last_error": None}
+    identity_vc = device.get("identity_vc")
+    capability_vc = device.get("capability_vc")
+    if isinstance(identity_vc, dict) and identity_vc.get("id"):
+        patch["identity_proof"] = client.refresh_proof(identity_vc["id"])
+    if isinstance(capability_vc, dict) and capability_vc.get("id"):
+        patch["capability_proof"] = client.refresh_proof(capability_vc["id"])
+    return _update(device["id"], patch)
+
+
+def _is_active_non_revoked_device(device: dict[str, Any]) -> bool:
+    return (
+        device.get("status") == "active"
+        and device.get("credential_status") == "active"
+        and not _has_revoked_capability(device)
+    )
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _require_active_credentials(

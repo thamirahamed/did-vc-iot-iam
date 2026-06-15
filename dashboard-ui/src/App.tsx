@@ -232,20 +232,7 @@ export default function App() {
           key={`topology-${topologyResetKey}`}
           session={session}
           events={timelineEvents}
-          busyAction={busyAction}
-          actionPending={actionPending}
-          selectedDeviceReady={selectedDeviceReady}
-          lastResult={lastResult}
           onSelectDevice={selectDevice}
-          actions={{
-            addDevice: commonActions.addDevice,
-            issueIdentity: commonActions.issueIdentity,
-            issueCapability: commonActions.issueCapability,
-            authorizeRead: commonActions.authorizeRead,
-            revokeCapability: commonActions.revokeCapability,
-            refreshProof: commonActions.refreshProof,
-            runBenchmark: commonActions.runBenchmark,
-          }}
         />
       ) : null}
       {activePage === "wallet" ? (

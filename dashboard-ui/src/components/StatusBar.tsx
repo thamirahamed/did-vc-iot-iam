@@ -18,7 +18,7 @@ export default function StatusBar({
           IoT Identity and Access Management Lab
         </h2>
         <p className="font-mono text-[11px] text-muted">
-          Packet Tracer style DID, VC, revocation, audit, and Fabric telemetry
+          Agent based IoT identity, access control, revocation, audit, and Fabric performance telemetry
         </p>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2">

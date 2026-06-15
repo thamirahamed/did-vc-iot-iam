@@ -2,7 +2,6 @@ import {
   BadgePlus,
   Ban,
   KeyRound,
-  LockOpen,
   RefreshCw,
   ShieldPlus,
   Undo2,
@@ -163,12 +162,10 @@ function walletButtons({
   const hasIdentityVc = Boolean(selectedDevice?.identityVc);
   const hasIdentityProof = Boolean(selectedDevice?.identityProof);
   const hasCapabilityVc = Boolean(selectedDevice?.capabilityVc);
-  const hasAccumulatorProof = hasIdentityProof || Boolean(selectedDevice?.capabilityProof);
   const hasActiveCapability =
     hasCapabilityVc &&
     selectedDevice?.status === "active" &&
     selectedDevice.capabilityStatus !== "revoked";
-  const canCheckAccess = hasActiveCapability && hasAccumulatorProof;
   const isRevoked = selectedDevice?.status === "revoked";
   const duplicateTitle =
     selectedDeviceReady && hasIdentityVc && hasCapabilityVc
@@ -231,16 +228,6 @@ function walletButtons({
       disabled: actionPending || !selectedDeviceReady || isRevoked || !hasIdentityProof,
       title: !selectedDeviceSelectable ? "Select a device first." : undefined,
       onClick: actions.refreshProof,
-    },
-    {
-      id: "authorize",
-      label: "Check Access",
-      loading: "Checking...",
-      icon: LockOpen,
-      tone: "text-green",
-      disabled: actionPending || !selectedDeviceReady || !canCheckAccess,
-      title: !selectedDeviceSelectable ? "Select a device first." : undefined,
-      onClick: actions.authorizeRead,
     },
     {
       id: "restore",

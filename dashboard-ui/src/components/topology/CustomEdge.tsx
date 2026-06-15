@@ -1,5 +1,4 @@
 import {
-  BaseEdge,
   getBezierPath,
   type EdgeProps,
 } from "reactflow";
@@ -34,17 +33,22 @@ export default function CustomEdge({
   const color = data?.color || "#00dce5";
   const active = data?.active;
   const muted = data?.muted;
+  const dashLength = 8;
+  const dashGap = 8;
 
   return (
     <>
-      <BaseEdge
+      <path
         id={id}
-        path={edgePath}
+        d={edgePath}
+        fill="none"
+        className="react-flow__edge-path topology-animated-edge"
         style={{
           stroke: color,
           strokeWidth: active ? 3 : 2,
           strokeOpacity: muted ? 0.28 : active ? 1 : 0.72,
-          strokeDasharray: data?.dashed ? "7 7" : undefined,
+          strokeDasharray: `${dashLength} ${dashGap}`,
+          strokeDashoffset: dashLength + dashGap,
           filter: active ? `drop-shadow(0 0 8px ${color})` : undefined,
         }}
       />

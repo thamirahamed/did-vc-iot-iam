@@ -82,7 +82,6 @@ function createInitialNodes(
       kind: "queue",
       items: [
         { label: "Non blocking audit mode", color: "bg-purple" },
-        { label: "Pending 0", color: "bg-purple" },
       ],
     },
   },
@@ -96,7 +95,6 @@ function createInitialNodes(
       items: [
         { label: "Long running adapter", color: "bg-cyan" },
         { label: "Peer CLI bridge", color: "bg-cyan" },
-        { label: "Healthy", color: "bg-green" },
       ],
     },
   },
@@ -131,34 +129,14 @@ const initialEdges: Edge<CustomEdgeData>[] = [
     "left-target",
   ),
   edge(
-    "issuer-devices",
-    "issuer",
-    "devices",
-    "#3b82f6",
-    "VC Delivery",
-    "Issuer returns identity VC, capability VC, and accumulator proof to the device.",
-    "left",
-    "right-target",
-  ),
-  edge(
     "devices-verifier",
     "devices",
     "verifier",
     "#10b981",
     "Authorization Request",
-    "Device presents VC and accumulator proof to verifier.",
+    "Device presents VC and accumulator proof to verifier. Verifier returns allow or deny decision.",
     "right",
     "left-target",
-  ),
-  edge(
-    "verifier-devices",
-    "verifier",
-    "devices",
-    "#10b981",
-    "Authorization Result",
-    "Verifier returns allow or deny decision.",
-    "left",
-    "right-target",
   ),
   edge(
     "issuer-adapter",
@@ -290,7 +268,6 @@ function TopologyCanvasInner({
         {
           ...connection,
           type: "custom",
-          animated: true,
           data: {
             color: "#00dce5",
             name: "Custom Link",
@@ -432,7 +409,6 @@ function edge(
     sourceHandle,
     targetHandle,
     type: "custom",
-    animated: true,
     data: { color, dashed, name, tooltip },
   };
 }
