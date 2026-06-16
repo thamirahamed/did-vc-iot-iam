@@ -124,6 +124,14 @@ export type BenchmarkOperation = {
 
 export type BenchmarkSummary = {
   full_lifecycle_ms?: number | null;
+  measured_lifecycle_ms?: number | null;
+  raw_wall_clock_ms?: number | null;
+  excluded_wait_ms?: number | null;
+  includes_cache_wait?: boolean | null;
+  timing_scope?: string | null;
+  uses_device_agent?: boolean | null;
+  uses_holder_agent?: boolean | null;
+  breakdown_by_stage_ms?: Record<string, number>;
   auth_allow_ms?: number | null;
   revocation_ms?: number | null;
   proof_refresh_ms?: number | null;
@@ -170,6 +178,14 @@ export type BenchmarkComparisonEntry = {
     proof_refresh_ms?: number | null;
   };
   operations: BenchmarkOperation[];
+  measured_lifecycle_ms?: number | null;
+  raw_wall_clock_ms?: number | null;
+  excluded_wait_ms?: number | null;
+  includes_cache_wait?: boolean | null;
+  timing_scope?: string | null;
+  uses_device_agent?: boolean | null;
+  uses_holder_agent?: boolean | null;
+  breakdown_by_stage_ms?: Record<string, number>;
   profile?: string | null;
   mode?: string | null;
 };
@@ -215,6 +231,14 @@ export type ConstrainedProfileResult = {
   cpu_limit: string;
   memory_limit: string;
   full_lifecycle_ms?: number | null;
+  measured_lifecycle_ms?: number | null;
+  raw_wall_clock_ms?: number | null;
+  excluded_wait_ms?: number | null;
+  includes_cache_wait?: boolean | null;
+  timing_scope?: string | null;
+  uses_device_agent?: boolean | null;
+  uses_holder_agent?: boolean | null;
+  breakdown_by_stage_ms?: Record<string, number>;
   auth_allow_ms?: number | null;
   proof_refresh_ms?: number | null;
   payload_size_bytes?: number | null;

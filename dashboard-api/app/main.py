@@ -1501,8 +1501,20 @@ def _parse_pipeline_summary(path: Path) -> dict[str, Any]:
                     "category": category,
                 }
             )
+    breakdown_by_stage_ms = {
+        metric: round(value, 3)
+        for metric, value in by_metric.items()
+        if metric in BENCHMARK_LABELS
+    }
+    measured_lifecycle_ms = by_metric.get("measured_lifecycle_ms") or by_metric.get("full_iteration_ms")
+    excluded_wait_ms = by_metric.get("excluded_wait_ms") or 0.0
     return {
-        "full_lifecycle_ms": by_metric.get("full_iteration_ms"),
+        "full_lifecycle_ms": measured_lifecycle_ms,
+        "measured_lifecycle_ms": measured_lifecycle_ms,
+        "raw_wall_clock_ms": by_metric.get("raw_wall_clock_ms") or measured_lifecycle_ms,
+        "excluded_wait_ms": excluded_wait_ms,
+        "includes_cache_wait": False,
+        "breakdown_by_stage_ms": breakdown_by_stage_ms,
         "auth_allow_ms": by_metric.get("auth_allow_ms"),
         "revocation_ms": by_metric.get("revoke_capability_ms"),
         "proof_refresh_ms": by_metric.get("proof_refresh_ms"),
@@ -1886,12 +1898,22 @@ def _comparison_entry(summary: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     return {
         "headline": {
-            "full_lifecycle_ms": summary.get("full_lifecycle_ms"),
+            "full_lifecycle_ms": summary.get("measured_lifecycle_ms")
+            or summary.get("full_lifecycle_ms"),
             "auth_allow_ms": summary.get("auth_allow_ms"),
             "revocation_ms": summary.get("revocation_ms"),
             "proof_refresh_ms": summary.get("proof_refresh_ms"),
         },
         "operations": summary.get("operations") or [],
+        "measured_lifecycle_ms": summary.get("measured_lifecycle_ms")
+        or summary.get("full_lifecycle_ms"),
+        "raw_wall_clock_ms": summary.get("raw_wall_clock_ms"),
+        "excluded_wait_ms": summary.get("excluded_wait_ms"),
+        "includes_cache_wait": summary.get("includes_cache_wait"),
+        "timing_scope": summary.get("timing_scope"),
+        "uses_device_agent": summary.get("uses_device_agent"),
+        "uses_holder_agent": summary.get("uses_holder_agent"),
+        "breakdown_by_stage_ms": summary.get("breakdown_by_stage_ms"),
         "profile": summary.get("profile"),
         "mode": summary.get("mode"),
     }
@@ -1932,7 +1954,31 @@ def _with_benchmark_metadata(
     summary["benchmark_type"] = benchmark_type
     summary["profile"] = profile
     summary["mode"] = mode
+    summary.setdefault("timing_scope", _timing_scope(benchmark_type))
+    summary.setdefault("uses_device_agent", benchmark_type in {"fabric_pipeline", "constrained"})
+    summary.setdefault("uses_holder_agent", False)
+    summary.setdefault("includes_cache_wait", False)
+    summary.setdefault("excluded_wait_ms", 0.0)
+    if summary.get("measured_lifecycle_ms") is None:
+        summary["measured_lifecycle_ms"] = summary.get("full_lifecycle_ms")
+    if summary.get("raw_wall_clock_ms") is None:
+        summary["raw_wall_clock_ms"] = summary.get("full_lifecycle_ms")
     return summary
+
+
+def _timing_scope(benchmark_type: str) -> str:
+    if benchmark_type in {"fabric_pipeline", "constrained"}:
+        return (
+            "Measured lifecycle includes device-agent DID registration/resolution, VC issuance, "
+            "authorization, revocation, proof refresh, and replacement authorization. It excludes "
+            "wallet reset, setup, health checks, container startup, and artificial cache wait."
+        )
+    if benchmark_type == "local":
+        return (
+            "Measured lifecycle includes the centralized API-equivalent IAM operations in-process. "
+            "It does not use the device agent and excludes benchmark setup and result formatting."
+        )
+    return "Measured benchmark operation time excludes dashboard orchestration and result formatting."
 
 
 def _benchmark_profile(benchmark_type: str) -> str:

@@ -283,11 +283,15 @@ export default function PerformancePage() {
       label: "Centralised Baseline full lifecycle",
       value: formatDuration(localLifecycle),
       color: chartPalette.baseline,
+      note: summary?.comparison.local?.timing_scope || undefined,
     },
     {
       label: "Fabric full lifecycle",
       value: formatDuration(fabricLifecycle),
       color: chartPalette.fabric,
+      note: summary?.comparison.fabric?.includes_cache_wait
+        ? "This run includes cache wait and is not directly comparable."
+        : summary?.comparison.fabric?.timing_scope || "Measured lifecycle excludes setup, health checks, cache wait, and container startup.",
     },
     {
       label: "Lifecycle overhead",
@@ -541,6 +545,10 @@ function ConstrainedSection({
   const constrained = profiles.find((profile) => profile.profile === "constrained");
   const low = profiles.find((profile) => profile.profile === "low_resource");
   const tiny = profiles.find((profile) => profile.profile === "tiny");
+  const chartProfiles = profiles.map((profile) => ({
+    ...profile,
+    measured_lifecycle_ms: profile.measured_lifecycle_ms ?? profile.full_lifecycle_ms,
+  }));
   return (
     <section className="glass-card rounded p-5">
       <SectionIntro
@@ -548,18 +556,18 @@ function ConstrainedSection({
         description="Each profile runs the holder workflow inside its own resource limited device agent container."
       />
       <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard card={{ label: "Gateway full lifecycle", value: formatDuration(gateway?.full_lifecycle_ms), color: chartPalette.fabric }} loading={loading} />
-        <MetricCard card={{ label: "Constrained full lifecycle", value: formatDuration(constrained?.full_lifecycle_ms), color: chartPalette.warning }} loading={loading} />
-        <MetricCard card={{ label: "Low resource full lifecycle", value: formatDuration(low?.full_lifecycle_ms), color: chartPalette.revocation }} loading={loading} />
-        <MetricCard card={{ label: "Tiny IoT full lifecycle", value: formatDuration(tiny?.full_lifecycle_ms), color: chartPalette.proof }} loading={loading} />
+        <MetricCard card={{ label: "Gateway full lifecycle", value: formatDuration(gateway?.measured_lifecycle_ms ?? gateway?.full_lifecycle_ms), color: chartPalette.fabric, note: timingNote(gateway) }} loading={loading} />
+        <MetricCard card={{ label: "Constrained full lifecycle", value: formatDuration(constrained?.measured_lifecycle_ms ?? constrained?.full_lifecycle_ms), color: chartPalette.warning, note: timingNote(constrained) }} loading={loading} />
+        <MetricCard card={{ label: "Low resource full lifecycle", value: formatDuration(low?.measured_lifecycle_ms ?? low?.full_lifecycle_ms), color: chartPalette.revocation, note: timingNote(low) }} loading={loading} />
+        <MetricCard card={{ label: "Tiny IoT full lifecycle", value: formatDuration(tiny?.measured_lifecycle_ms ?? tiny?.full_lifecycle_ms), color: chartPalette.proof, note: timingNote(tiny) }} loading={loading} />
       </div>
       <div className="mt-5 grid gap-5 xl:grid-cols-2">
         <ChartCard title="Constrained profile latency comparison">
           {loading ? (
             <ChartSkeleton />
-          ) : profiles.length ? (
+          ) : chartProfiles.length ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={profiles} margin={{ top: 8, right: 18, bottom: 8, left: 0 }}>
+              <BarChart data={chartProfiles} margin={{ top: 8, right: 18, bottom: 8, left: 0 }}>
                 <CartesianGrid stroke={chartPalette.grid} vertical={false} />
                 <XAxis dataKey="label" stroke={chartPalette.muted} tickLine={false} />
                 <YAxis stroke={chartPalette.muted} tickLine={false} tickFormatter={(value) => formatAxisDuration(Number(value))} />
@@ -569,7 +577,7 @@ function ConstrainedSection({
                   labelStyle={tooltipLabelStyle}
                   cursor={{ fill: chartPalette.cursor }}
                 />
-                <Bar dataKey="full_lifecycle_ms" name="Full lifecycle" fill={chartPalette.fabric} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="measured_lifecycle_ms" name="Measured lifecycle" fill={chartPalette.fabric} radius={[4, 4, 0, 0]} />
                 <Bar dataKey="auth_allow_ms" name="Valid access" fill={chartPalette.success} radius={[4, 4, 0, 0]} />
                 <Bar dataKey="proof_refresh_ms" name="Proof refresh" fill={chartPalette.proof} radius={[4, 4, 0, 0]} />
               </BarChart>
@@ -878,6 +886,7 @@ function MetricCard({ card, loading }: { card: MetricCardData; loading: boolean 
           {card.value}
         </div>
       )}
+      {card.note ? <div className="mt-2 text-[11px] leading-snug text-muted">{card.note}</div> : null}
     </section>
   );
 }
@@ -904,13 +913,16 @@ function ConstrainedTable({ profiles }: { profiles: ConstrainedBenchmarkSummary[
   if (!profiles.length) return <EmptyPanel message="No constrained device emulation results yet." />;
   return (
     <div className="overflow-x-auto rounded border border-line/30 bg-background/45">
-      <table className="ledger-table min-w-[720px] text-left text-xs">
+      <table className="ledger-table min-w-[980px] text-left text-xs">
         <thead className="font-mono uppercase">
           <tr>
             <HeaderCell>Profile</HeaderCell>
             <HeaderCell>CPU Limit</HeaderCell>
             <HeaderCell>Memory Limit</HeaderCell>
-            <HeaderCell>Full Lifecycle</HeaderCell>
+            <HeaderCell>Measured Lifecycle</HeaderCell>
+            <HeaderCell>Raw Wall Clock</HeaderCell>
+            <HeaderCell>Excluded Wait</HeaderCell>
+            <HeaderCell>Uses Agent</HeaderCell>
             <HeaderCell>Valid Access</HeaderCell>
             <HeaderCell>Proof Refresh</HeaderCell>
             <HeaderCell>Payload Size</HeaderCell>
@@ -922,7 +934,10 @@ function ConstrainedTable({ profiles }: { profiles: ConstrainedBenchmarkSummary[
               <BodyCell>{profile.label}</BodyCell>
               <BodyCell mono>{profile.cpu_limit}</BodyCell>
               <BodyCell mono>{profile.memory_limit}</BodyCell>
-              <BodyCell mono>{formatDuration(profile.full_lifecycle_ms)}</BodyCell>
+              <BodyCell mono>{formatDuration(profile.measured_lifecycle_ms ?? profile.full_lifecycle_ms)}</BodyCell>
+              <BodyCell mono>{formatDuration(profile.raw_wall_clock_ms)}</BodyCell>
+              <BodyCell mono>{formatDuration(profile.excluded_wait_ms)}</BodyCell>
+              <BodyCell mono>{profile.uses_device_agent ? "yes" : "no"}</BodyCell>
               <BodyCell mono>{formatDuration(profile.auth_allow_ms)}</BodyCell>
               <BodyCell mono>{formatDuration(profile.proof_refresh_ms)}</BodyCell>
               <BodyCell mono>{formatBytes(profile.payload_size_bytes)}</BodyCell>
@@ -932,6 +947,12 @@ function ConstrainedTable({ profiles }: { profiles: ConstrainedBenchmarkSummary[
       </table>
     </div>
   );
+}
+
+function timingNote(profile: ConstrainedBenchmarkSummary["profiles"][number] | undefined) {
+  if (!profile) return undefined;
+  if (profile.includes_cache_wait) return "This run includes cache wait and is not directly comparable.";
+  return profile.timing_scope || "Measured lifecycle excludes setup, health checks, cache wait, and container startup.";
 }
 
 function isUnsupportedRevocationTest(test: RevocationConnectivitySummary["tests"][number]) {
@@ -1394,6 +1415,7 @@ type MetricCardData = {
   label: string;
   value: string;
   color: string;
+  note?: string;
 };
 
 type ComparisonRow = {

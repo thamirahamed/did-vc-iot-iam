@@ -34,6 +34,12 @@ VERIFIER_CACHE_WAIT_SECONDS = float(os.getenv("VERIFIER_CACHE_WAIT_SECONDS", "2.
 ACTION = os.getenv("BENCHMARK_ACTION", "read")
 RESOURCE = os.getenv("BENCHMARK_RESOURCE", "iot:device:example")
 BENCHMARK_DEVICE_ID = os.getenv("BENCHMARK_DEVICE_ID", "benchmark-device-01")
+TIMING_SCOPE = (
+    "Measured lifecycle includes DID registration/resolution, identity and capability issuance, "
+    "valid and wrong-action authorization, capability revocation, revoked/stale denial, "
+    "replacement capability issuance, proof refresh, and restored authorization. It excludes "
+    "wallet reset, setup, health checks, container startup, and artificial cache wait."
+)
 
 
 app = FastAPI(title="Benchmark Agent")
@@ -265,8 +271,35 @@ def run_pipeline(
     summary_rows = summarize_rows(rows)
     write_rows(summary_path, summary_rows)
     values = {row["metric"]: float(row["mean"]) for row in summary_rows if row.get("mean") not in (None, "")}
+    breakdown = {
+        key: values[key]
+        for key in (
+            "did_create_ms",
+            "did_resolve_ms",
+            "identity_vc_issue_ms",
+            "capability_vc_issue_ms",
+            "proof_refresh_ms",
+            "auth_allow_ms",
+            "auth_wrong_action_deny_ms",
+            "revoke_capability_ms",
+            "auth_revoked_or_stale_deny_ms",
+            "replacement_capability_issue_ms",
+            "replacement_proof_refresh_ms",
+            "auth_replacement_allow_ms",
+        )
+        if key in values
+    }
     return {
         "full_lifecycle_ms": values.get("full_iteration_ms"),
+        "measured_lifecycle_ms": values.get("measured_lifecycle_ms")
+        or values.get("full_iteration_ms"),
+        "raw_wall_clock_ms": values.get("raw_wall_clock_ms"),
+        "excluded_wait_ms": values.get("excluded_wait_ms") or 0.0,
+        "includes_cache_wait": False,
+        "timing_scope": TIMING_SCOPE,
+        "uses_device_agent": True,
+        "uses_holder_agent": False,
+        "breakdown_by_stage_ms": breakdown,
         "auth_allow_ms": values.get("auth_allow_ms"),
         "proof_refresh_ms": values.get("proof_refresh_ms"),
         "did_create_ms": values.get("did_create_ms"),
@@ -298,10 +331,12 @@ def run_pipeline_iteration(
     network_profile: str = "none",
     force_fresh_verifier_state: bool = False,
 ) -> dict[str, Any]:
+    raw_started = time.perf_counter()
     if not preserve_wallet:
         reset_wallet()
     row: dict[str, Any] = {"iteration": iteration}
-    started = time.perf_counter()
+    measured_started = time.perf_counter()
+    excluded_wait_ms = 0.0
 
     onboard_response, row["did_create_ms"] = timed_call(onboard)
     _, row["did_resolve_ms"] = timed_call(lambda: resolve_did(str(onboard_response["did"])))
@@ -366,6 +401,7 @@ def run_pipeline_iteration(
         row["verifier_cache_wait_ms"] = 0.0
     elif VERIFIER_CACHE_WAIT_SECONDS > 0:
         row["verifier_cache_wait_ms"] = round(VERIFIER_CACHE_WAIT_SECONDS * 1000, 3)
+        excluded_wait_ms += row["verifier_cache_wait_ms"]
         time.sleep(VERIFIER_CACHE_WAIT_SECONDS)
     else:
         row["verifier_cache_wait_ms"] = 0.0
@@ -417,7 +453,14 @@ def run_pipeline_iteration(
     row["replacement_allow_reason"] = replacement_allow["final_reason"]
     expect_decision(replacement_allow, "allow", "replacement authorization")
 
-    row["full_iteration_ms"] = elapsed_ms(started)
+    row["excluded_wait_ms"] = round(excluded_wait_ms, 3)
+    row["raw_wall_clock_ms"] = elapsed_ms(raw_started)
+    row["measured_lifecycle_ms"] = round(
+        max(0.0, elapsed_ms(measured_started) - excluded_wait_ms),
+        3,
+    )
+    row["full_iteration_ms"] = row["measured_lifecycle_ms"]
+    row["includes_cache_wait"] = False
     return row
 
 
@@ -1030,6 +1073,9 @@ def summarize_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "revoke_response_bytes",
         "accumulator_state_bytes",
         "verifier_cache_wait_ms",
+        "excluded_wait_ms",
+        "raw_wall_clock_ms",
+        "measured_lifecycle_ms",
         "auth_revoked_or_stale_deny_ms",
         "replacement_capability_issue_ms",
         "replacement_proof_refresh_ms",

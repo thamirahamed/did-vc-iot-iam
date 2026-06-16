@@ -25,6 +25,9 @@ FORCE_FRESH_VERIFIER_STATE = (
 # will treat them as missing rather than zero.
 AGENT_TO_METRIC = {
     "full_lifecycle_ms": "full_iteration_ms",
+    "measured_lifecycle_ms": "measured_lifecycle_ms",
+    "raw_wall_clock_ms": "raw_wall_clock_ms",
+    "excluded_wait_ms": "excluded_wait_ms",
     "auth_allow_ms": "auth_allow_ms",
     "proof_refresh_ms": "proof_refresh_ms",
     "did_create_ms": "did_create_ms",

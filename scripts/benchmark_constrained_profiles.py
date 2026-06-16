@@ -15,6 +15,11 @@ RUNS = int(os.getenv("BENCHMARK_RUNS", "3"))
 WARMUP_RUNS = int(os.getenv("BENCHMARK_WARMUP_RUNS", "1"))
 OUTPUT_DIR = Path(os.getenv("BENCHMARK_OUTPUT_DIR", "results"))
 HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "30"))
+TIMING_SCOPE = (
+    "Measured lifecycle includes device-agent DID registration/resolution, VC issuance, "
+    "authorization, revocation, proof refresh, and replacement authorization. It excludes "
+    "wallet reset, setup, health checks, container startup, and artificial cache wait."
+)
 
 PROFILES = [
     {
@@ -69,6 +74,7 @@ def main() -> None:
                     "runs": RUNS,
                     "warmup_runs": WARMUP_RUNS,
                     "profile": profile["profile"],
+                    "force_fresh_verifier_state": True,
                 },
             )
             summary = response.get("summary") if isinstance(response, dict) else {}
@@ -80,6 +86,26 @@ def main() -> None:
             error = str(exc)
         finally:
             stop_resource_monitor(monitor)
+        measured_lifecycle_ms = summary.get("measured_lifecycle_ms") or summary.get("full_lifecycle_ms")
+        breakdown_by_stage_ms = summary.get("breakdown_by_stage_ms")
+        if not isinstance(breakdown_by_stage_ms, dict):
+            breakdown_by_stage_ms = {
+                key: summary.get(key)
+                for key in (
+                    "did_create_ms",
+                    "did_resolve_ms",
+                    "identity_vc_issue_ms",
+                    "capability_vc_issue_ms",
+                    "proof_refresh_ms",
+                    "auth_allow_ms",
+                    "auth_wrong_action_deny_ms",
+                    "revoke_capability_ms",
+                    "auth_revoked_or_stale_deny_ms",
+                    "replacement_capability_issue_ms",
+                    "auth_replacement_allow_ms",
+                )
+                if isinstance(summary.get(key), (int, float))
+            }
         resources = summarize_resource_csv(resource_path, "Constrained device emulation")
         resource_rows.extend(resources)
         peak = peak_resource(resources)
@@ -89,7 +115,15 @@ def main() -> None:
                 "label": profile["label"],
                 "cpu_limit": profile["cpu_limit"],
                 "memory_limit": profile["memory_limit"],
-                "full_lifecycle_ms": summary.get("full_lifecycle_ms"),
+                "full_lifecycle_ms": measured_lifecycle_ms,
+                "measured_lifecycle_ms": measured_lifecycle_ms,
+                "raw_wall_clock_ms": summary.get("raw_wall_clock_ms") or measured_lifecycle_ms,
+                "excluded_wait_ms": summary.get("excluded_wait_ms") or 0.0,
+                "includes_cache_wait": bool(summary.get("includes_cache_wait")),
+                "timing_scope": summary.get("timing_scope") or TIMING_SCOPE,
+                "uses_device_agent": True,
+                "uses_holder_agent": bool(summary.get("uses_holder_agent")),
+                "breakdown_by_stage_ms": breakdown_by_stage_ms,
                 "auth_allow_ms": summary.get("auth_allow_ms"),
                 "proof_refresh_ms": summary.get("proof_refresh_ms"),
                 "did_create_ms": summary.get("did_create_ms"),
@@ -104,11 +138,23 @@ def main() -> None:
                 "error": error,
             }
         )
+    gateway_profile = next(
+        (item for item in profiles if item.get("profile") == "gateway"),
+        profiles[0] if profiles else {},
+    )
     result = {
         "benchmark_type": "constrained",
         "profile": "docker_constrained_agents",
         "mode": "docker constrained device emulation",
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "measured_lifecycle_ms": gateway_profile.get("measured_lifecycle_ms"),
+        "raw_wall_clock_ms": gateway_profile.get("raw_wall_clock_ms"),
+        "excluded_wait_ms": gateway_profile.get("excluded_wait_ms") or 0.0,
+        "includes_cache_wait": bool(gateway_profile.get("includes_cache_wait")),
+        "timing_scope": TIMING_SCOPE,
+        "uses_device_agent": True,
+        "uses_holder_agent": False,
+        "breakdown_by_stage_ms": gateway_profile.get("breakdown_by_stage_ms") or {},
         "profiles": profiles,
         "resource_usage": resource_rows,
     }
