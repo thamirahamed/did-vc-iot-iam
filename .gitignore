@@ -6,6 +6,8 @@
 .env.project
 .env.local
 fabric/.fabric-env
+third_party/fabric-samples/
+fabric-samples/
 fabric/chaincode/iam/vendor/
 **/vendor/
 vendor/
@@ -27,6 +29,10 @@ __pycache__/
 **/__pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+**/.pytest_cache/
+node_modules/
 fabric/chaincode/iam/iam
 dashboard-ui/node_modules/
 dashboard-ui/dist/
+dashboard-ui/tsconfig.tsbuildinfo

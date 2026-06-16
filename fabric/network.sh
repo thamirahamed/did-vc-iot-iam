@@ -28,8 +28,8 @@ load_env_defaults() {
   done < "$file"
 }
 
-load_env_defaults "$REPO_ROOT/.env.project"
 load_env_defaults "$SCRIPT_DIR/.fabric-env"
+load_env_defaults "$REPO_ROOT/.env.project"
 
 FABRIC_VERSION="${FABRIC_VERSION:-2.5.15}"
 FABRIC_CA_VERSION="${FABRIC_CA_VERSION:-1.5.15}"
@@ -73,8 +73,9 @@ find_fabric_samples_path() {
   fi
 
   local candidates=(
-    "$SCRIPT_DIR/../fabric-samples"
-    "$SCRIPT_DIR/../../fabric-samples"
+    "$REPO_ROOT/third_party/fabric-samples"
+    "$REPO_ROOT/../fabric-samples"
+    "$REPO_ROOT/fabric-samples"
     "$HOME/fabric-samples"
     "$HOME/Documents/fabric-samples"
     "$HOME/Documents/Coding Projects/fabric-samples"
@@ -87,22 +88,14 @@ find_fabric_samples_path() {
   done
 
   cat >&2 <<EOF
-Fabric samples test-network was not found.
+Fabric Samples not found.
 
-Install Fabric samples, or set FABRIC_SAMPLES_PATH in .env.project or fabric/.fabric-env.
+Install it with:
+  mkdir -p third_party
+  cd third_party
+  curl -sSL https://bit.ly/2ysbOFE | bash -s -- 2.5.15 1.5.15
 
-  curl -sSL https://bit.ly/2ysbOFE | bash -s -- 2.5.15 1.5.17
-
-You can create:
-
-  .env.project
-
-or:
-
-  fabric/.fabric-env
-
-with:
-
+or set FABRIC_SAMPLES_PATH in .env.project or fabric/.fabric-env:
   FABRIC_SAMPLES_PATH="/path/to/fabric-samples"
 
 Expected test network script:

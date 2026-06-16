@@ -283,15 +283,11 @@ export default function PerformancePage() {
       label: "Centralised Baseline full lifecycle",
       value: formatDuration(localLifecycle),
       color: chartPalette.baseline,
-      note: summary?.comparison.local?.timing_scope || undefined,
     },
     {
       label: "Fabric full lifecycle",
       value: formatDuration(fabricLifecycle),
       color: chartPalette.fabric,
-      note: summary?.comparison.fabric?.includes_cache_wait
-        ? "This run includes cache wait and is not directly comparable."
-        : summary?.comparison.fabric?.timing_scope || "Measured lifecycle excludes setup, health checks, cache wait, and container startup.",
     },
     {
       label: "Lifecycle overhead",
@@ -556,10 +552,10 @@ function ConstrainedSection({
         description="Each profile runs the holder workflow inside its own resource limited device agent container."
       />
       <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard card={{ label: "Gateway full lifecycle", value: formatDuration(gateway?.measured_lifecycle_ms ?? gateway?.full_lifecycle_ms), color: chartPalette.fabric, note: timingNote(gateway) }} loading={loading} />
-        <MetricCard card={{ label: "Constrained full lifecycle", value: formatDuration(constrained?.measured_lifecycle_ms ?? constrained?.full_lifecycle_ms), color: chartPalette.warning, note: timingNote(constrained) }} loading={loading} />
-        <MetricCard card={{ label: "Low resource full lifecycle", value: formatDuration(low?.measured_lifecycle_ms ?? low?.full_lifecycle_ms), color: chartPalette.revocation, note: timingNote(low) }} loading={loading} />
-        <MetricCard card={{ label: "Tiny IoT full lifecycle", value: formatDuration(tiny?.measured_lifecycle_ms ?? tiny?.full_lifecycle_ms), color: chartPalette.proof, note: timingNote(tiny) }} loading={loading} />
+        <MetricCard card={{ label: "Gateway full lifecycle", value: formatDuration(gateway?.measured_lifecycle_ms ?? gateway?.full_lifecycle_ms), color: chartPalette.fabric }} loading={loading} />
+        <MetricCard card={{ label: "Constrained full lifecycle", value: formatDuration(constrained?.measured_lifecycle_ms ?? constrained?.full_lifecycle_ms), color: chartPalette.warning }} loading={loading} />
+        <MetricCard card={{ label: "Low resource full lifecycle", value: formatDuration(low?.measured_lifecycle_ms ?? low?.full_lifecycle_ms), color: chartPalette.revocation }} loading={loading} />
+        <MetricCard card={{ label: "Tiny IoT full lifecycle", value: formatDuration(tiny?.measured_lifecycle_ms ?? tiny?.full_lifecycle_ms), color: chartPalette.proof }} loading={loading} />
       </div>
       <div className="mt-5 grid gap-5 xl:grid-cols-2">
         <ChartCard title="Constrained profile latency comparison">
@@ -886,7 +882,6 @@ function MetricCard({ card, loading }: { card: MetricCardData; loading: boolean 
           {card.value}
         </div>
       )}
-      {card.note ? <div className="mt-2 text-[11px] leading-snug text-muted">{card.note}</div> : null}
     </section>
   );
 }
@@ -947,12 +942,6 @@ function ConstrainedTable({ profiles }: { profiles: ConstrainedBenchmarkSummary[
       </table>
     </div>
   );
-}
-
-function timingNote(profile: ConstrainedBenchmarkSummary["profiles"][number] | undefined) {
-  if (!profile) return undefined;
-  if (profile.includes_cache_wait) return "This run includes cache wait and is not directly comparable.";
-  return profile.timing_scope || "Measured lifecycle excludes setup, health checks, cache wait, and container startup.";
 }
 
 function isUnsupportedRevocationTest(test: RevocationConnectivitySummary["tests"][number]) {
@@ -1415,7 +1404,6 @@ type MetricCardData = {
   label: string;
   value: string;
   color: string;
-  note?: string;
 };
 
 type ComparisonRow = {
